@@ -7,8 +7,9 @@ import json
 import os
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from statistics import median
 from typing import Any
 
@@ -155,25 +156,30 @@ def ingest(
 
 
 def _date_bounds(date_str: str | None) -> tuple[str | None, str | None]:
+    """Convert a study-local YYYY-MM-DD into UTC boundaries for storage queries."""
     if not date_str:
         return None, None
-    start = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-    from datetime import timedelta
-    end = start + timedelta(days=1)
-    return iso_utc(start), iso_utc(end)
+    local_tz = ZoneInfo(settings.study_timezone)
+    start_local = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=local_tz)
+    end_local = start_local + timedelta(days=1)
+    return iso_utc(start_local), iso_utc(end_local)
 
 
 def get_locations(participant_id: str, date_str: str | None = None):
     start, end = _date_bounds(date_str)
-    sql = "SELECT * FROM gps_locations WHERE participant_id=?"
+    sql = """
+        SELECT g.*, r.headers_device AS owntracks_device_id
+        FROM gps_locations AS g
+        JOIN raw_events AS r ON r.id = g.raw_event_id
+        WHERE g.participant_id=?
+    """
     args: list[Any] = [participant_id]
     if start:
-        sql += " AND recorded_at_utc>=? AND recorded_at_utc<?"
+        sql += " AND g.recorded_at_utc>=? AND g.recorded_at_utc<?"
         args.extend([start, end])
-    sql += " ORDER BY recorded_at_utc"
+    sql += " ORDER BY g.recorded_at_utc"
     with db() as conn:
         return conn.execute(sql, args).fetchall()
-
 
 def participant_exists(participant_id: str) -> bool:
     with db() as conn:
@@ -186,7 +192,8 @@ def qc_summary(participant_id: str, date_str: str | None = None) -> dict[str, An
     if not rows:
         return {
             "participant_id": participant_id,
-            "date_utc": date_str,
+            "date_local": date_str,
+            "study_timezone": settings.study_timezone,
             "status": "NO_DATA",
             "location_count": 0,
         }
@@ -217,7 +224,8 @@ def qc_summary(participant_id: str, date_str: str | None = None) -> dict[str, An
 
     return {
         "participant_id": participant_id,
-        "date_utc": date_str,
+        "date_local": date_str,
+            "study_timezone": settings.study_timezone,
         "status": "WARNING" if warnings else "OK",
         "warnings": warnings,
         "location_count": len(rows),
@@ -233,6 +241,7 @@ def qc_summary(participant_id: str, date_str: str | None = None) -> dict[str, An
         "max_delivery_delay_seconds": round(max(delays), 2) if delays else None,
         "last_battery_pct": rows[-1]["battery_pct"],
         "last_device_tid": rows[-1]["owntracks_tid"],
+        "last_device_id": rows[-1]["owntracks_device_id"],
     }
 
 
@@ -243,7 +252,7 @@ def export_csv(participant_id: str, date_str: str | None = None) -> str:
         "participant_id","recorded_at_utc","created_at_utc","received_at_utc",
         "lat","lon","accuracy_m","altitude_m","vertical_accuracy_m",
         "velocity_kmh","course_deg","battery_pct","battery_status","connection",
-        "monitoring_mode","trigger","source","owntracks_tid",
+        "monitoring_mode","trigger","source","owntracks_tid","owntracks_device_id",
     ]
     writer = csv.DictWriter(output, fieldnames=fields)
     writer.writeheader()

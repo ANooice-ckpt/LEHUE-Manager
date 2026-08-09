@@ -30,9 +30,10 @@ app.include_router(gps_router)
 def root():
     return {
         "project": settings.project_name,
-        "service": "server-blueprint",
+        "service": "lehue-manager-backend",
         "version": settings.app_version,
         "implemented_modules": ["gps"],
+        "study_timezone": settings.study_timezone,
         "reserved_modules": ["light", "questionnaire", "qc", "admin"],
     }
 

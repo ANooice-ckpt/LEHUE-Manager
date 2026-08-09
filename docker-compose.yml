@@ -2,13 +2,13 @@ services:
   api:
     build:
       context: ./server
-    container_name: lighttrace-api
+    container_name: lehue-api
     restart: unless-stopped
     env_file:
       - .env
     environment:
       DATA_DIR: /app/data
-      DB_PATH: /app/data/lighttrace.sqlite3
+      DB_PATH: /app/data/lehue.sqlite3
       RAW_ARCHIVE_DIR: /app/data/raw/gps
     volumes:
       - ./server/data:/app/data
@@ -17,7 +17,7 @@ services:
 
   caddy:
     image: caddy:2-alpine
-    container_name: lighttrace-caddy
+    container_name: lehue-caddy
     restart: unless-stopped
     depends_on:
       - api

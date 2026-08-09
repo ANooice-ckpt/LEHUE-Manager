@@ -1,69 +1,119 @@
-# Windows 本地开发（不使用 Docker）
+# Windows 本地开发 — LEHUE v0.2.2
 
-这仍然是推荐的日常开发方式。Docker 只用于最终复现和部署。
+日常开发继续使用 Windows + VS Code。Docker 只用于可重复部署，不要求你在容器里写代码。
 
-## 1. 打开 PowerShell
+## 0. 目录
 
-```powershell
-cd D:\LightTrace\server
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+仓库示例：
+
+```text
+D:\PhD\LEHUE\LEHUE-Manager
 ```
 
-## 2. 在仓库根目录创建 `.env`
+虚拟环境会创建在：
 
-复制 `.env.example` 为 `.env`。注意：直接本地运行 FastAPI 时，Python 不会自动读取 `.env`；最简单的测试方式是在当前 PowerShell 设置环境变量：
-
-```powershell
-$env:ADMIN_TOKEN="换成一串长随机字符"
-$env:DATA_DIR="./data"
-$env:DB_PATH="./data/lighttrace.sqlite3"
-$env:RAW_ARCHIVE_DIR="./data/raw/gps"
+```text
+D:\PhD\LEHUE\LEHUE-Manager\server\.venv
 ```
 
-随机 token：
+因此安装后的 Python 包主要位于项目所在盘。v0.2.2 setup 还会关闭 pip 下载缓存，避免安装过程中继续向 C: 的默认 pip cache 写入安装包缓存。
+
+## 1. 第一次初始化
+
+在仓库根目录 PowerShell：
 
 ```powershell
-python -c "import secrets; print(secrets.token_urlsafe(48))"
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\windows_setup.ps1
 ```
 
-## 3. 创建 TEST01
+脚本会：
+
+1. 创建/复用 `server\.venv`；
+2. 安装 `requirements-dev.txt`（其中包含运行依赖与 pytest/httpx）；
+3. 验证关键模块均可导入；
+4. 首次生成 `.env` 和随机 `ADMIN_TOKEN`；
+5. 运行自动化测试。
+
+成功时应看到：
+
+```text
+LEHUE local setup is ready.
+```
+
+## 2. 环境体检
+
+任何时候如果怀疑环境不完整：
 
 ```powershell
-python scripts\create_participant.py TEST01
+.\scripts\windows_doctor.ps1
 ```
 
-复制终端打印的 password。
+它会检查：
 
-## 4. 启动
+- venv 是否存在；
+- Python 实际路径；
+- fastapi / uvicorn / httpx / pytest；
+- 项目盘和 C: 剩余空间。
+
+## 3. 启动本地服务器
 
 ```powershell
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8085 --reload
+.\scripts\windows_start.ps1
 ```
 
-浏览器：`http://127.0.0.1:8085/health`
+浏览器：
 
-## 5. OwnTracks 配置
+- `http://127.0.0.1:8085/health`
+- `http://127.0.0.1:8085/docs`
 
-- Mode: HTTP
-- URL: `https://你的-Cloudflare-临时域名/api/v1/gps/owntracks`
-- Username: `TEST01`
-- Password: 第3步得到的密码
+保持这个 PowerShell 窗口打开。Ctrl+C 停止服务器。
 
-Cloudflare 继续映射本机 `http://localhost:8085` 即可。
+## 4. 创建测试 participant
 
-## 6. 管理接口
-
-PowerShell：
+另开一个仓库根目录 PowerShell：
 
 ```powershell
-$headers=@{Authorization="Bearer $env:ADMIN_TOKEN"}
-Invoke-RestMethod -Headers $headers http://127.0.0.1:8085/api/v1/admin/gps/status/TEST01
+.\scripts\windows_create_test_participant.ps1 TEST01
 ```
 
-CSV：
+保存终端只显示一次的 password。
+
+## 5. 本地 smoke test
+
+服务器正在运行时：
 
 ```powershell
-Invoke-WebRequest -Headers $headers http://127.0.0.1:8085/api/v1/admin/gps/export/TEST01.csv -OutFile TEST01_gps.csv
+.\scripts\windows_smoke_test.ps1 -Password "刚才的密码"
 ```
+
+HEALTH / INGEST / STATUS 均返回 200，即代表最小 GPS 链路正常。
+
+## 6. OwnTracks + Cloudflare 临时测试
+
+保持 LEHUE 本地服务器运行，再把 Cloudflare tunnel 指向：
+
+```text
+http://localhost:8085
+```
+
+OwnTracks HTTP URL：
+
+```text
+https://<trycloudflare-host>/api/v1/gps/owntracks
+```
+
+Username = `TEST01`，Password = participant password。
+
+## 7. 手工跑测试
+
+```powershell
+cd .\server
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+## 8. 依赖说明
+
+`server/requirements.txt`：云端运行所需，仅 FastAPI/Uvicorn 等运行依赖。
+
+`server/requirements-dev.txt`：Windows 开发/测试使用，引用运行依赖并额外安装 pytest/httpx。

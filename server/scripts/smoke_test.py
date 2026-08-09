@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path as _Path
+sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+
 import argparse
 import json
 import time
 import urllib.request
 import base64
+
+from app.core.config import settings
 
 
 def request(url, method="GET", data=None, headers=None):
@@ -19,7 +25,7 @@ def main():
     p.add_argument("--base", default="http://127.0.0.1:8085")
     p.add_argument("--user", default="TEST01")
     p.add_argument("--password", required=True)
-    p.add_argument("--admin-token", required=True)
+    p.add_argument("--admin-token", default=settings.admin_token)
     args=p.parse_args()
 
     print("HEALTH", request(args.base+"/health"))

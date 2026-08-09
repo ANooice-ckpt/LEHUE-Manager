@@ -50,7 +50,7 @@ def gps_status(participant_id: str, date: str | None = None):
     try:
         return service.qc_summary(participant_id, date)
     except ValueError:
-        raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD in UTC.")
+        raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD in the configured study timezone.")
 
 
 @router.get("/api/v1/admin/gps/export/{participant_id}.csv", dependencies=[Depends(require_admin)])
@@ -60,7 +60,7 @@ def gps_export(participant_id: str, date: str | None = None):
     try:
         text = service.export_csv(participant_id, date)
     except ValueError:
-        raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD in UTC.")
+        raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD in the configured study timezone.")
     filename = f"{participant_id}_gps{('_'+date) if date else ''}.csv"
     return PlainTextResponse(
         text,

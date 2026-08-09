@@ -65,8 +65,8 @@ docker compose version
 
 ```bash
 cd /opt
-git clone https://github.com/YOUR_ACCOUNT/LightTrace.git
-cd LightTrace
+git clone https://github.com/ANooice-ckpt/LEHUE-Manager.git
+cd LEHUE-Manager
 ```
 
 如果仓库是 private repo，请使用 GitHub 推荐的 SSH key / token 方法，不要把 GitHub 密码写到命令中。
@@ -148,7 +148,7 @@ curl -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
 以后发现 bug：Windows 本地改 → 本地测试 → push GitHub，然后服务器：
 
 ```bash
-cd /opt/LightTrace
+cd /opt/LEHUE-Manager
 git pull
 docker compose up -d --build
 ```
@@ -157,4 +157,9 @@ docker compose up -d --build
 
 ## M. 最低限度备份
 
-测试阶段至少每天把 `/opt/LightTrace/server/data` 打包一次并复制到另一台设备。正式阶段再接 OSS/自动快照，不要把唯一副本留在 ECS/轻量服务器本地盘。
+测试阶段至少每天把 `/opt/LEHUE-Manager/server/data` 打包一次并复制到另一台设备。正式阶段再接 OSS/自动快照，不要把唯一副本留在 ECS/轻量服务器本地盘。
+
+
+## N. v0.2.2 dependency policy
+
+Docker image only installs `server/requirements.txt` (runtime dependencies). `pytest` and `httpx` used for local development/tests live in `server/requirements-dev.txt` and are not required in the production container.

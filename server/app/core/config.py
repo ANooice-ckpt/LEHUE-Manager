@@ -4,6 +4,35 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.version import APP_VERSION
+
+
+def _load_repo_env() -> None:
+    """Load repository-root .env without adding a third-party dependency.
+
+    Existing process environment variables always win. This keeps Windows local
+    development simple while remaining compatible with Docker env_file.
+    """
+    repo_root = Path(__file__).resolve().parents[3]
+    env_path = repo_root / ".env"
+    if not env_path.exists():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        if key:
+            os.environ.setdefault(key, value)
+
+
+_load_repo_env()
+
 
 def _bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
@@ -21,11 +50,12 @@ def _int(name: str, default: int) -> int:
 
 @dataclass(frozen=True)
 class Settings:
-    project_name: str = os.getenv("PROJECT_NAME", "LightTrace")
-    app_version: str = os.getenv("APP_VERSION", "0.2.0")
+    project_name: str = os.getenv("PROJECT_NAME", "LEHUE")
+    app_version: str = APP_VERSION
+    study_timezone: str = os.getenv("STUDY_TIMEZONE", "Asia/Shanghai")
     admin_token: str = os.getenv("ADMIN_TOKEN", "CHANGE_ME_TO_A_LONG_RANDOM_ADMIN_TOKEN")
     data_dir: Path = Path(os.getenv("DATA_DIR", "./data"))
-    db_path: Path = Path(os.getenv("DB_PATH", "./data/lighttrace.sqlite3"))
+    db_path: Path = Path(os.getenv("DB_PATH", "./data/lehue.sqlite3"))
     raw_archive_dir: Path = Path(os.getenv("RAW_ARCHIVE_DIR", "./data/raw/gps"))
     enable_docs: bool = _bool("ENABLE_DOCS", True)
     qc_gap_warning_seconds: int = _int("QC_GAP_WARNING_SECONDS", 300)
