@@ -1,0 +1,37 @@
+services:
+  api:
+    build:
+      context: ./server
+    container_name: lighttrace-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /app/data
+      DB_PATH: /app/data/lighttrace.sqlite3
+      RAW_ARCHIVE_DIR: /app/data/raw/gps
+    volumes:
+      - ./server/data:/app/data
+    expose:
+      - "8000"
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: lighttrace-caddy
+    restart: unless-stopped
+    depends_on:
+      - api
+    env_file:
+      - .env
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

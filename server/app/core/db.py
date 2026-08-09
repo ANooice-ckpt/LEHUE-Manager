@@ -1,0 +1,97 @@
+from __future__ import annotations
+
+import sqlite3
+from contextlib import contextmanager
+from pathlib import Path
+
+from .config import settings
+
+SCHEMA = """
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS participants (
+    participant_id TEXT PRIMARY KEY,
+    secret_salt TEXT NOT NULL,
+    secret_hash TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS raw_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    participant_id TEXT NOT NULL,
+    event_uid TEXT NOT NULL,
+    owntracks_event_id TEXT,
+    message_type TEXT NOT NULL,
+    recorded_at_utc TEXT,
+    created_at_utc TEXT,
+    received_at_utc TEXT NOT NULL,
+    headers_user TEXT,
+    headers_device TEXT,
+    raw_json TEXT NOT NULL,
+    archive_ok INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY(participant_id) REFERENCES participants(participant_id),
+    UNIQUE(participant_id, event_uid)
+);
+
+CREATE INDEX IF NOT EXISTS idx_raw_participant_received
+ON raw_events(participant_id, received_at_utc);
+
+CREATE TABLE IF NOT EXISTS gps_locations (
+    raw_event_id INTEGER PRIMARY KEY,
+    participant_id TEXT NOT NULL,
+    recorded_at_utc TEXT NOT NULL,
+    created_at_utc TEXT,
+    received_at_utc TEXT NOT NULL,
+    lat REAL NOT NULL,
+    lon REAL NOT NULL,
+    accuracy_m REAL,
+    altitude_m REAL,
+    vertical_accuracy_m REAL,
+    velocity_kmh REAL,
+    course_deg REAL,
+    battery_pct INTEGER,
+    battery_status INTEGER,
+    connection TEXT,
+    monitoring_mode INTEGER,
+    trigger TEXT,
+    source TEXT,
+    owntracks_tid TEXT,
+    FOREIGN KEY(raw_event_id) REFERENCES raw_events(id) ON DELETE CASCADE,
+    FOREIGN KEY(participant_id) REFERENCES participants(participant_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_gps_participant_recorded
+ON gps_locations(participant_id, recorded_at_utc);
+"""
+
+
+def connect() -> sqlite3.Connection:
+    settings.db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(settings.db_path, timeout=30, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA synchronous=FULL;")
+    conn.execute("PRAGMA foreign_keys=ON;")
+    return conn
+
+
+@contextmanager
+def db():
+    conn = connect()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def init_db() -> None:
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    settings.raw_archive_dir.mkdir(parents=True, exist_ok=True)
+    with connect() as conn:
+        conn.executescript(SCHEMA)
+        conn.commit()

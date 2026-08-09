@@ -1,0 +1,16 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+server/data/*
+!server/data/.gitkeep
+!server/data/raw/
+server/data/raw/*
+!server/data/raw/gps/
+server/data/raw/gps/*
+*.db
+*.sqlite
+*.sqlite3
+.DS_Store
+.vscode/
+.idea/
