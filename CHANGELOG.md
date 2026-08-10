@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.2 - 2026-08-10
+
+- Added mandatory per-start runtime selection between `TEST` and `PROD`; the choice is process-scoped and cannot be changed from the Web UI.
+- Split all mutable state into physically separate `data/test` and `data/prod` trees, including both SQLite databases plus raw GPS and Lighting files.
+- `LEHUE_ENV` is intentionally ignored in `.env`, so every real server start must explicitly select an environment again.
+- Windows startup now prompts for TEST/PROD and requires an extra `PROD` confirmation before formal-study writes.
+- Docker deployment refuses to start unless `LEHUE_ENV=test` or `LEHUE_ENV=prod` is supplied; added a small Linux/Docker startup helper.
+- Root/health responses and service metadata expose the locked runtime environment for diagnostics.
+
 ## 0.5.1 - 2026-08-10
 
 - Replaced the temporary daily questionnaires with the two formal morning and bedtime forms supplied for the study.
