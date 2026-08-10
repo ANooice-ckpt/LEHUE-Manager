@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from app.core.config import settings
 from app.core.db import db, init_db
 from app.core.identity_db import init_identity_db
+from app.core.test_seed import install_test_seed_if_empty
 from app.modules.gps.router import router as gps_router
 from app.modules.admin.router import router as admin_router
 from app.modules.participant.router import router as participant_router
@@ -15,6 +16,7 @@ from app.modules.participant.router import router as participant_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    install_test_seed_if_empty()
     init_db()
     init_identity_db()
     yield

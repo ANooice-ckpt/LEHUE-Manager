@@ -9,3 +9,10 @@ tests/
 *.sqlite
 *.sqlite3
 *.log
+
+# The immutable synthetic TEST baseline is intentionally part of the image.
+!test_seed/
+!test_seed/**
+test_seed/*-wal
+test_seed/*-shm
+test_seed/*-journal

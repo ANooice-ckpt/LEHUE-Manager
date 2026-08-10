@@ -85,6 +85,7 @@ class Settings:
     identity_db_path: Path = _DATA_DIR / "lehue_identity.sqlite3"
     raw_archive_dir: Path = _DATA_DIR / "raw" / "gps"
     raw_light_dir: Path = _DATA_DIR / "raw" / "lighting"
+    load_test_seed: bool = _bool("LOAD_TEST_SEED", True)
     light_upload_max_bytes: int = _int("LIGHT_UPLOAD_MAX_BYTES", 25 * 1024 * 1024)
     enable_docs: bool = _bool("ENABLE_DOCS", True)
     qc_gap_warning_seconds: int = _int("QC_GAP_WARNING_SECONDS", 300)

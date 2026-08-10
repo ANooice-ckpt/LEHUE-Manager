@@ -17,11 +17,6 @@ htmlcov/
 /data/
 /server/data/**
 !/server/data/.gitkeep
-!/server/data/raw/
-!/server/data/raw/gps/
-!/server/data/raw/gps/.gitkeep
-!/server/data/raw/lighting/
-!/server/data/raw/lighting/.gitkeep
 
 # Backups and local working output.
 /backups/
@@ -33,6 +28,17 @@ lehue_backup_*/
 *.sqlite
 *.sqlite3
 *.log
+
+# Versioned synthetic TEST baseline. Runtime TEST/PROD data remain ignored.
+!/server/test_seed/
+!/server/test_seed/**
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
+*.sqlite-wal
+*.sqlite-shm
+*.db-wal
+*.db-shm
 
 # Editor and OS metadata.
 .DS_Store

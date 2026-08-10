@@ -1,4 +1,4 @@
-# LEHUE-Manager v0.5.1
+# LEHUE-Manager v0.5.3
 
 **LEHUE = Light Exposure Histories in Urban Environments**
 
@@ -28,7 +28,10 @@ LEHUE-Manager/
 │   │   └── web/                    # Admin + Participant Portal 页面
 │   ├── scripts/
 │   ├── tests/
-│   └── data/                        # 永远不提交 Git
+│   ├── test_seed/                   # Git 跟踪的纯模拟 TEST 初始数据
+│   └── data/
+│       ├── test/                    # TEST 运行数据，不提交 Git
+│       └── prod/                    # PROD 正式数据，永不提交 Git
 ├── scripts/
 ├── docs/
 ├── docker-compose.yml
@@ -63,9 +66,16 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 在“被试运行”中给被试生成“工作入口”，复制返回的专属链接后即可在手机/浏览器测试问卷和 GPS 状态。详见 `docs/04_PARTICIPANT_PORTAL_V0_4.md`。
 
+## TEST / PROD 数据边界
+
+- 每次启动必须显式选择 `test` 或 `prod`，运行期间不能从页面切换。
+- `server/test_seed/` 是允许进入 Git 的纯模拟基线；新的或尚无记录的 TEST 环境会自动复制一次。
+- TEST 后续操作只修改被 Git 忽略的 `data/test`，因此多地 `git pull` 不会产生 SQLite 冲突。
+- PROD 只读写 `data/prod`，永远不会加载 `test_seed`；正式数据和 `.env` 始终被 Git 忽略。
+
 ## 安全边界
 
-- `.env`、两个 SQLite、raw JSONL、GPS、问卷响应、真实联系方式均不得提交 Git。
+- `.env`、TEST/PROD 运行库、raw JSONL、GPS、问卷响应和真实联系方式均不得提交 Git；唯一例外是明确标记为纯模拟的 `server/test_seed/`。
 - `/p/<token>` 的 token 本身就是被试端身份凭据：不可猜测、数据库仅存 hash，但收到链接的人可以代表该被试访问工作入口，因此不要转发或公开。
 - 公网部署只暴露 Caddy 80/443；FastAPI 8000 不直接开放。
 - `/health` 不返回 participant ID、身份信息、坐标或问卷答案。

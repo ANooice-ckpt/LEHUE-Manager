@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.3 - 2026-08-10
+
+- Added a Git-versioned, synthetic-only `server/test_seed` baseline while keeping mutable `data/test` and all `data/prod` state ignored.
+- TEST installs the baseline when both runtime databases are absent or contain no records; existing TEST activity is never overwritten.
+- PROD returns before inspecting or copying TEST seed data, and automated tests explicitly disable seed installation.
+- Included the seed in Docker images so a fresh TEST server obtains the same simulated starting state after `git pull` and build.
+
 ## 0.5.2 - 2026-08-10
 
 - Added mandatory per-start runtime selection between `TEST` and `PROD`; the choice is process-scoped and cannot be changed from the Web UI.
