@@ -21,7 +21,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title=f"{settings.project_name} Server",
+    title=f"{settings.project_name} Server [{settings.runtime_env.upper()}]",
     version=settings.app_version,
     docs_url="/docs" if settings.enable_docs else None,
     redoc_url=None,
@@ -38,6 +38,7 @@ async def security_headers(request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-LEHUE-Environment"] = settings.runtime_env
     if (
         request.url.path.startswith("/admin")
         or request.url.path.startswith("/api/v1/web")
@@ -54,6 +55,7 @@ def root():
         "project": settings.project_name,
         "service": "lehue-manager-backend",
         "version": settings.app_version,
+        "runtime_environment": settings.runtime_env,
         "implemented_modules": ["gps", "web_admin", "participant_portal", "questionnaire", "lighting", "acquisition_qc", "s0_import"],
         "study_timezone": settings.study_timezone,
         "reserved_modules": ["ax3"],
@@ -78,6 +80,7 @@ def health():
             "status": "ok" if archive_failures == 0 else "degraded",
             "project": settings.project_name,
             "version": settings.app_version,
+            "runtime_environment": settings.runtime_env,
             "database": "ok",
             "gps_location_count": count,
             "questionnaire_response_count": questionnaire_count,
@@ -91,6 +94,7 @@ def health():
             "status": "error",
             "project": settings.project_name,
             "version": settings.app_version,
+            "runtime_environment": settings.runtime_env,
             "database": "error",
             "detail": str(exc),
         }
