@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.0 - 2026-08-10
+
+- Added a token-based Participant Portal at `/p/<token>` inspired by the existing ANOLighting participant task console.
+- Added one-click participant portal link generation/rotation from the Web Admin; the participant ID is not embedded in the URL.
+- Added native LEHUE morning/evening test questionnaires with automatic participant identity, local date and Study Day binding.
+- Added a single `questionnaire_responses` table; questionnaire definitions remain code-configured in v0.4 to avoid over-engineering.
+- Added GPS last-seen status and daily questionnaire completion to the participant portal and Admin subject/dashboard views.
+- Reclassified Questionnaire from Wenjuanxing manual import to a native connected LEHUE data source.
+- Added automatic in-place SQLite migration for portal token fields, preserving existing v0.3.x data.
+- Included questionnaire response counts/content in the existing consistent system-state backup.
+- Added participant portal integration tests and database migration checks while retaining GPS/Admin tests.
+
 ## 0.3.1 - 2026-08-10
 
 - Replaced command-line-first account bootstrap with a browser first-run setup flow.
