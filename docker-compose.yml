@@ -9,6 +9,7 @@ services:
     environment:
       DATA_DIR: /app/data
       DB_PATH: /app/data/lehue.sqlite3
+      IDENTITY_DB_PATH: /app/data/lehue_identity.sqlite3
       RAW_ARCHIVE_DIR: /app/data/raw/gps
     volumes:
       - ./server/data:/app/data

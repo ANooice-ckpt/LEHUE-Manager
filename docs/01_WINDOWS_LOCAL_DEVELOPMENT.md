@@ -117,3 +117,13 @@ cd .\server
 `server/requirements.txt`：云端运行所需，仅 FastAPI/Uvicorn 等运行依赖。
 
 `server/requirements-dev.txt`：Windows 开发/测试使用，引用运行依赖并额外安装 pytest/httpx。
+
+## Web Admin (v0.3+)
+
+首次创建 PI 登录账号：
+
+```powershell
+.\scripts\windows_create_admin.ps1 -Username pi -Role pi -DisplayName "PI"
+```
+
+启动后访问 `http://127.0.0.1:8085/admin`。详见 `docs/03_WEB_ADMIN_V0_3.md`。

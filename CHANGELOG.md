@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0 - 2026-08-10
+
+- Added a simple Web Admin while keeping scientific analysis local.
+- Preserved the V5 operational flow: candidate → participant ID/schedule → device pack → running → incident handling.
+- Added dashboard, subjects, candidates, device packs, incidents, data sources and architecture views.
+- Added PI/RA accounts, HttpOnly sessions, CSRF checks, security headers and audit logging.
+- Split identity/contact data into `lehue_identity.sqlite3`; operational/GPS data remain in `lehue.sqlite3`.
+- Added one-time OwnTracks credential creation from the Web Admin.
+- Added V5 `state.json` operational migration script.
+- Added tests for Web Admin workflow while retaining GPS API tests.
+
 ## 0.2.2 - 2026-08-10
 
 - Fixed missing `pytest` dependency in Windows setup.
@@ -17,7 +28,6 @@
 - Added Windows setup/start/test helper scripts.
 - Added study-local calendar-day QC using `Asia/Shanghai` by default while retaining UTC storage.
 - Exposed OwnTracks device identifier in GPS QC/export.
-- Cleaned generated caches from the distributable package.
 
 ## 0.2.0
 

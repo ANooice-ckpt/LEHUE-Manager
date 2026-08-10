@@ -1,67 +1,70 @@
-# LEHUE-Manager v0.2.2
+# LEHUE-Manager v0.3.0
 
 **LEHUE = Light Exposure Histories in Urban Environments**
 
-这是 LEHUE 的统一管理与数据基础设施仓库。当前阶段只真正实现 **GPS acquisition**；Light、Questionnaire、Cross-modal QC、Admin integration 保留模块位置，后续逐步接入。
+LEHUE-Manager 是实验运营与采集状态基础设施。**科研分析不搬云端。** 当前真正实现两条主线：
 
-## 当前已实现的数据链
+1. GPS acquisition：OwnTracks → HTTP/HTTPS → FastAPI → participant authentication → SQLite + append-only JSONL → acquisition QC / CSV export。
+2. Web Admin：PI/RA 登录 → 候选/被试/设备包/异常管理 → GPS 状态汇入统一运营界面。
 
-OwnTracks → HTTP/HTTPS → FastAPI → participant authentication → SQLite + append-only JSONL mirror → acquisition QC / CSV export
-
-## 仓库结构
+## 当前结构
 
 ```text
 LEHUE-Manager/
 ├── server/
 │   ├── app/
 │   │   ├── core/
-│   │   └── modules/
-│   │       ├── gps/             # v0.2.x 已实现
-│   │       ├── light/           # reserved
-│   │       ├── questionnaire/   # reserved
-│   │       ├── qc/              # reserved
-│   │       └── admin/           # reserved
+│   │   │   ├── db.py               # 运营 + GPS DB
+│   │   │   ├── identity_db.py      # 身份/联系/账号 DB
+│   │   │   └── web_security.py
+│   │   ├── modules/
+│   │   │   ├── gps/                # 已实现
+│   │   │   ├── admin/              # v0.3 已实现基础运营
+│   │   │   ├── light/              # reserved
+│   │   │   ├── questionnaire/      # reserved
+│   │   │   └── qc/                 # reserved
+│   │   └── web/index.html          # 单页 Web Admin；延续旧 V5 的表格/状态卡思路
 │   ├── scripts/
 │   ├── tests/
-│   └── data/                    # 不提交 Git
-├── scripts/                     # Windows 开发快捷脚本
+│   └── data/                        # 永远不提交 Git
+├── scripts/
 ├── docs/
 ├── docker-compose.yml
 └── Caddyfile
 ```
 
-## v0.2.2 变化
+## v0.3.0 新增
 
-- 修复 Windows setup 会运行 `pytest`、但未安装 `pytest` 的依赖缺口。
-- 将服务器运行依赖与本地开发/测试依赖拆分为 `requirements.txt` 与 `requirements-dev.txt`。
-- Windows setup 默认使用 `--no-cache-dir`，避免 pip 安装缓存继续占用系统盘。
-- setup 对每个原生命令检查退出码，依赖安装失败会立即停止，不再留下看似“初始化成功”的半成品环境。
-- setup 安装后主动验证 `fastapi`、`uvicorn`、`httpx`、`pytest`。
-- start 启动前检查 `fastapi/uvicorn`，依赖缺失时给出明确修复命令。
-- 新增 `scripts/windows_doctor.ps1`，一键检查 venv、关键模块及 C:/项目盘剩余空间。
-- 应用版本号改由代码单一来源管理，不再放进 `.env`，避免覆盖升级后仍错误显示旧版本。
-- 保持 v0.2.1 的 LEHUE 命名、北京时间日级 QC、GPS 数据模型和 API 不变。
+- 基础 Web Admin 可视化界面：总览、被试运行、候选池、设备包、异常、数据源、系统架构。
+- 保留旧 V5 的候选→赋 ID/预约→启动→异常处理核心工作流。
+- PI / RA 登录；12 h HttpOnly session；CSRF；安全响应头；audit log。
+- 身份库 `lehue_identity.sqlite3` 与伪匿名运营/GPS库 `lehue.sqlite3` 物理分离。
+- Web 中可为正式被试一次性生成 OwnTracks credential；secret 仍只存 hash。
+- GPS 最近回传直接进入 Dashboard / 被试运行表。
+- Lighting、问卷星、AX3 以“数据源”方式预留，不硬搬旧 V5 的本地扫描实现。
+- `migrate_v5_state.py` 可迁移旧候选、被试、设备包和异常。
+- 自动测试覆盖原 GPS API 和基础 Web Admin workflow。
 
-## 第一次本地运行
-
-在仓库根目录 PowerShell：
+## 第一次 Windows 本地运行
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\windows_setup.ps1
+.\scripts\windows_create_admin.ps1 -Username pi -Role pi -DisplayName "PI"
 .\scripts\windows_start.ps1
 ```
 
-浏览器打开：
+浏览器：
 
-- `http://127.0.0.1:8085/health`
-- `http://127.0.0.1:8085/docs`
+- Web Admin: `http://127.0.0.1:8085/admin`
+- Health: `http://127.0.0.1:8085/health`
+- API docs: `http://127.0.0.1:8085/docs`
 
-详细流程见 `docs/01_WINDOWS_LOCAL_DEVELOPMENT.md`。
+详细见 `docs/03_WEB_ADMIN_V0_3.md`。
 
 ## 安全边界
 
-- `.env`、participant secrets、SQLite、raw JSONL、真实 GPS 均不得提交 Git。
-- `/health` 不返回坐标和 participant ID。
-- 正式公网部署时 FastAPI 8000 不直接开放，只允许 Caddy 暴露 80/443。
-- 当前仍是工程 prototype；正式被试前还需冻结隐私、备份、数据地域、恢复与审计方案。
+- `.env`、两个 SQLite、raw JSONL、GPS、真实联系方式均不得提交 Git。
+- 公网部署只暴露 Caddy 80/443；FastAPI 8000 不直接开放。
+- `/health` 不返回 participant ID、身份信息或坐标。
+- v0.3 是工程测试级 Web Admin；正式被试前仍需冻结自动备份/恢复、账号权限细分、数据地域与隐私流程。

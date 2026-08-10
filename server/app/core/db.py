@@ -63,6 +63,69 @@ CREATE TABLE IF NOT EXISTS gps_locations (
 
 CREATE INDEX IF NOT EXISTS idx_gps_participant_recorded
 ON gps_locations(participant_id, recorded_at_utc);
+
+CREATE TABLE IF NOT EXISTS study_subjects (
+    participant_id TEXT PRIMARY KEY,
+    candidate_uid TEXT,
+    status TEXT NOT NULL DEFAULT 'scheduled',
+    batch_id TEXT NOT NULL DEFAULT '',
+    expected_start TEXT NOT NULL DEFAULT '',
+    expected_end TEXT NOT NULL DEFAULT '',
+    start_date TEXT NOT NULL DEFAULT '',
+    end_date TEXT NOT NULL DEFAULT '',
+    final_end TEXT NOT NULL DEFAULT '',
+    pack_id TEXT NOT NULL DEFAULT '',
+    assigned_ra TEXT NOT NULL DEFAULT '',
+    s1_status TEXT NOT NULL DEFAULT '',
+    latest_data_status TEXT NOT NULL DEFAULT '',
+    valid_days INTEGER NOT NULL DEFAULT 0,
+    completion_type TEXT NOT NULL DEFAULT '',
+    compensation TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '',
+    created_at_utc TEXT NOT NULL,
+    updated_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS device_packs (
+    pack_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'available',
+    current_participant_id TEXT NOT NULL DEFAULT '',
+    light_serial TEXT NOT NULL DEFAULT '',
+    ax3_serial TEXT NOT NULL DEFAULT '',
+    issued_date TEXT NOT NULL DEFAULT '',
+    expected_return_date TEXT NOT NULL DEFAULT '',
+    returned_date TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '',
+    updated_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS incidents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    incident_uid TEXT NOT NULL UNIQUE,
+    participant_id TEXT NOT NULL DEFAULT '',
+    date_local TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT '',
+    incident_type TEXT NOT NULL DEFAULT '',
+    severity TEXT NOT NULL DEFAULT 'normal',
+    status TEXT NOT NULL DEFAULT 'open',
+    assigned_ra TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '',
+    created_at_utc TEXT NOT NULL,
+    updated_at_utc TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status, participant_id);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    occurred_at_utc TEXT NOT NULL,
+    operator_username TEXT NOT NULL DEFAULT '',
+    action TEXT NOT NULL,
+    entity_type TEXT NOT NULL DEFAULT '',
+    entity_id TEXT NOT NULL DEFAULT '',
+    detail_json TEXT NOT NULL DEFAULT '{}'
+);
 """
 
 

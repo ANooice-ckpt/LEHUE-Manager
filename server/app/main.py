@@ -7,12 +7,15 @@ from fastapi import FastAPI
 
 from app.core.config import settings
 from app.core.db import db, init_db
+from app.core.identity_db import init_identity_db
 from app.modules.gps.router import router as gps_router
+from app.modules.admin.router import router as admin_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    init_identity_db()
     yield
 
 
@@ -24,6 +27,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(gps_router)
+app.include_router(admin_router)
+
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    if request.url.path.startswith("/admin") or request.url.path.startswith("/api/v1/web"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.get("/")
@@ -32,9 +47,9 @@ def root():
         "project": settings.project_name,
         "service": "lehue-manager-backend",
         "version": settings.app_version,
-        "implemented_modules": ["gps"],
+        "implemented_modules": ["gps", "web_admin"],
         "study_timezone": settings.study_timezone,
-        "reserved_modules": ["light", "questionnaire", "qc", "admin"],
+        "reserved_modules": ["light", "questionnaire", "qc"],
     }
 
 

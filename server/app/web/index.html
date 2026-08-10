@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LEHUE Manager</title>
+  <style>
+    :root{--bg:#f7f7f5;--card:#fff;--text:#111;--muted:#666;--line:#e8e8e3;--soft:#f0f0ec;--soft2:#fafaf8;--danger:#9b2c2c;--warn:#8a5a00;--ok:#1d6b3a;--info:#315d86;--radius:18px;--shadow:0 12px 32px rgba(0,0,0,.055)}
+    *{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at 50% -18%,rgba(0,0,0,.07),transparent 30%),var(--bg);color:var(--text);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+    button,input,select,textarea{font:inherit} button{cursor:pointer}.hidden{display:none!important}
+    header{width:min(1760px,94vw);margin:0 auto;padding:24px 0 12px;display:flex;justify-content:space-between;gap:18px;align-items:end}
+    h1{margin:0;font-size:26px;letter-spacing:.02em}.subtitle{margin-top:5px;color:var(--muted)} main{width:min(1760px,94vw);margin:0 auto;padding:0 0 44px}
+    .toolbar,.row{display:flex;gap:9px;flex-wrap:wrap;align-items:center}.toolbar{justify-content:flex-end}.tabs{display:flex;gap:8px;margin:10px 0 16px;flex-wrap:wrap}
+    .tab,.btn{border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:999px;padding:9px 13px}.tab.active,.btn.primary{background:#111;color:#fff;border-color:#111}.btn.danger{color:var(--danger)}.btn.small{padding:6px 10px;font-size:12px}
+    .grid{display:grid;gap:12px}.metrics{grid-template-columns:repeat(6,minmax(0,1fr));margin-bottom:14px}.metric,.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}.metric{padding:15px 16px}.metric .label{color:var(--muted);font-size:12px}.metric .value{font-size:29px;font-weight:750;line-height:1.2;margin-top:8px}.card{padding:18px;margin-bottom:14px}.card h2{font-size:17px;margin:0 0 12px}.card h3{font-size:15px;margin:0 0 10px}
+    .split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+    input,select,textarea{border:1px solid var(--line);background:#fff;border-radius:10px;padding:9px 10px;min-width:0} textarea{min-height:72px;resize:vertical}.form-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}.form-grid .wide{grid-column:span 2}.form-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
+    .table-wrap{overflow:auto;border:1px solid var(--line);border-radius:14px}table{width:100%;border-collapse:collapse;min-width:850px;background:#fff}th,td{text-align:left;padding:10px 11px;border-bottom:1px solid var(--line);white-space:nowrap;vertical-align:top}th{font-size:12px;color:var(--muted);background:var(--soft2);position:sticky;top:0}tr:last-child td{border-bottom:0}
+    .badge{display:inline-flex;align-items:center;border-radius:999px;padding:3px 8px;background:var(--soft);font-size:12px}.badge.ok{color:var(--ok);background:#edf7f0}.badge.warn{color:var(--warn);background:#fff6e2}.badge.danger{color:var(--danger);background:#fff0f0}.badge.info{color:var(--info);background:#eef5fb}.muted{color:var(--muted)}.mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+    .issue{padding:11px 0;border-bottom:1px solid var(--line)}.issue:last-child{border-bottom:0}.issue-title{display:flex;justify-content:space-between;gap:10px}.issue p{margin:4px 0 0;color:var(--muted)}
+    .source-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}.source{border:1px solid var(--line);border-radius:14px;padding:14px;background:#fff}.source .name{font-weight:700;font-size:15px}.source dl{margin:10px 0 0}.source dt{font-size:11px;color:var(--muted);margin-top:7px}.source dd{margin:1px 0 0}
+    .arch{display:grid;gap:10px}.arch-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;align-items:stretch}.node{border:1px solid var(--line);background:#fff;border-radius:14px;padding:13px;min-height:82px}.node .k{font-size:11px;color:var(--muted);text-transform:uppercase}.node strong{display:block;margin-top:5px}.arrow{text-align:center;color:var(--muted);font-size:18px;padding:1px}
+    #loginView{width:min(440px,92vw);margin:12vh auto;background:#fff;border:1px solid var(--line);border-radius:22px;padding:24px;box-shadow:var(--shadow)}#loginView h1{font-size:24px}#loginView input{width:100%;margin-top:8px}.login-error{color:var(--danger);min-height:22px;margin-top:8px}
+    .toast{position:fixed;right:18px;bottom:18px;background:#111;color:#fff;padding:10px 13px;border-radius:12px;opacity:0;transform:translateY(8px);pointer-events:none;transition:.18s}.toast.show{opacity:1;transform:none}
+    dialog{border:0;border-radius:18px;padding:0;box-shadow:0 28px 70px rgba(0,0,0,.24);width:min(620px,92vw)}dialog::backdrop{background:rgba(0,0,0,.28)}.dialog-body{padding:20px}.dialog-body h2{margin:0 0 12px}.dialog-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.dialog-grid label{display:grid;gap:4px}.dialog-grid .full{grid-column:1/-1}
+    @media(max-width:1100px){.metrics{grid-template-columns:repeat(3,1fr)}.source-grid{grid-template-columns:repeat(2,1fr)}.arch-row{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:720px){header{align-items:flex-start;flex-direction:column}.metrics{grid-template-columns:repeat(2,1fr)}.split,.three{grid-template-columns:1fr}.form-grid{grid-template-columns:1fr 1fr}.source-grid,.arch-row{grid-template-columns:1fr}.form-grid .wide{grid-column:1/-1}}
+  </style>
+</head>
+<body>
+<section id="loginView">
+  <h1>LEHUE Manager</h1>
+  <div class="subtitle">Light Exposure Histories in Urban Environments</div>
+  <div style="margin-top:20px"><label>用户名<input id="loginUser" autocomplete="username" value="pi"></label></div>
+  <div style="margin-top:10px"><label>密码<input id="loginPassword" type="password" autocomplete="current-password"></label></div>
+  <div class="login-error" id="loginError"></div>
+  <button class="btn primary" id="loginBtn" style="width:100%">登录</button>
+</section>
+
+<div id="appView" class="hidden">
+<header>
+  <div><h1>LEHUE Manager</h1><div class="subtitle">实验运营与采集状态 · 科研分析保持本地</div></div>
+  <div class="toolbar"><span id="who" class="muted"></span><button class="btn small" id="refreshBtn">刷新</button><button class="btn small" id="logoutBtn">退出</button></div>
+</header>
+<main>
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="overview">总览</button>
+    <button class="tab" data-tab="subjects">被试运行</button>
+    <button class="tab" data-tab="candidates">候选池</button>
+    <button class="tab" data-tab="devices">设备包</button>
+    <button class="tab" data-tab="incidents">异常</button>
+    <button class="tab" data-tab="sources">数据源</button>
+    <button class="tab" data-tab="architecture">系统架构</button>
+  </nav>
+
+  <section id="tab-overview" class="tabpage">
+    <div class="grid metrics" id="metrics"></div>
+    <div class="split">
+      <div class="card"><h2>运行中被试</h2><div id="runningList"></div></div>
+      <div class="card"><h2>待处理异常</h2><div id="attentionList"></div></div>
+    </div>
+  </section>
+
+  <section id="tab-subjects" class="tabpage hidden">
+    <div class="card"><h2>被试运行管理</h2><div class="muted" style="margin-bottom:10px">延续旧系统 scheduled → running → completed/canceled 状态逻辑；GPS 为当前首个实时数据源。</div><div class="table-wrap"><table><thead><tr><th>ID</th><th>姓名</th><th>状态</th><th>计划/实际日期</th><th>设备包</th><th>负责RA</th><th>GPS最近回传</th><th>操作</th></tr></thead><tbody id="subjectRows"></tbody></table></div></div>
+  </section>
+
+  <section id="tab-candidates" class="tabpage hidden">
+    <div class="card"><h2>新增候选</h2><div class="form-grid"><input id="cName" placeholder="姓名/称呼"><input id="cPhone" placeholder="手机号"><input id="cWechat" placeholder="微信"><input id="cSource" placeholder="来源渠道"><input id="cSex" placeholder="性别"><input id="cAge" placeholder="年龄段"><input id="cIdentity" placeholder="日程身份类型"><select id="cOs"><option value="">手机系统</option><option>Android</option><option>iOS</option></select><input id="cWork" placeholder="工作/学习区"><input id="cHome" placeholder="居住区"><input id="cAvail" class="wide" placeholder="可参与时间"><input id="cNotes" class="wide" placeholder="备注"></div><div class="form-actions"><button class="btn primary" id="addCandidateBtn">加入候选池</button></div></div>
+    <div class="card"><h2>候选池</h2><div class="table-wrap"><table><thead><tr><th>姓名</th><th>联系方式</th><th>来源</th><th>特征</th><th>地区</th><th>手机</th><th>关联ID</th><th>操作</th></tr></thead><tbody id="candidateRows"></tbody></table></div></div>
+  </section>
+
+  <section id="tab-devices" class="tabpage hidden">
+    <div class="card"><h2>新增/更新设备包</h2><div class="form-grid"><input id="dPack" placeholder="设备包，如 D01"><select id="dStatus"><option value="available">可用</option><option value="repair">维修</option><option value="disabled">停用</option></select><input id="dLight" placeholder="Lighting serial"><input id="dAx3" placeholder="AX3 serial"><input id="dNotes" class="wide" placeholder="备注"></div><div class="form-actions"><button class="btn primary" id="saveDeviceBtn">保存设备包</button></div></div>
+    <div class="card"><h2>设备包</h2><div class="table-wrap"><table><thead><tr><th>Pack</th><th>状态</th><th>当前被试</th><th>Lighting</th><th>AX3</th><th>发放</th><th>应回收</th><th>备注</th></tr></thead><tbody id="deviceRows"></tbody></table></div></div>
+  </section>
+
+  <section id="tab-incidents" class="tabpage hidden">
+    <div class="card"><h2>新建异常</h2><div class="form-grid"><input id="iPid" placeholder="被试ID"><input id="iDate" type="date"><select id="iSource"><option>GPS</option><option>Lighting</option><option>Questionnaire</option><option>AX3</option><option>Device</option><option>Manual</option></select><select id="iSeverity"><option value="normal">普通</option><option value="high">重要</option></select><input id="iType" placeholder="异常类型"><input id="iSummary" class="wide" placeholder="异常摘要"><input id="iNotes" class="wide" placeholder="处理备注"></div><div class="form-actions"><button class="btn primary" id="addIncidentBtn">加入异常中心</button></div></div>
+    <div class="card"><h2>开放异常</h2><div id="incidentList"></div></div>
+  </section>
+
+  <section id="tab-sources" class="tabpage hidden"><div class="card"><h2>各项数据源</h2><div class="muted" style="margin-bottom:12px">这里显示“数据从哪里来、现在存在哪里、自动化到哪一步”，不是科研结果页。</div><div class="source-grid" id="sourceGrid"></div></div></section>
+
+  <section id="tab-architecture" class="tabpage hidden"><div class="card"><h2>系统架构</h2><div id="architectureView"></div></div></section>
+</main>
+</div>
+
+<dialog id="promoteDialog"><div class="dialog-body"><h2>赋 ID 并预约</h2><div class="dialog-grid"><label>正式三位数 ID<input id="pId" placeholder="006"></label><label>批次<input id="pBatch"></label><label>计划开始<input id="pStart" type="date"></label><label>计划结束<input id="pEnd" type="date"></label><label>设备包（可空）<input id="pPack"></label><label>负责 RA<input id="pRa"></label></div><div class="form-actions"><button class="btn" data-close="promoteDialog">取消</button><button class="btn primary" id="promoteSubmit">创建预约</button></div></div></dialog>
+<dialog id="startDialog"><div class="dialog-body"><h2>启动运行</h2><div class="dialog-grid"><label>设备包<input id="sPack"></label><label>正式开始<input id="sStart" type="date"></label><label>预期结束<input id="sEnd" type="date"></label></div><div class="form-actions"><button class="btn" data-close="startDialog">取消</button><button class="btn primary" id="startSubmit">启动</button></div></div></dialog>
+<div class="toast" id="toast"></div>
+
+<script>
+let csrf='', me=null, activeTab='overview', selectedCandidate='', selectedSubject='';
+const $=id=>document.getElementById(id); const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function toast(msg){const t=$('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200)}
+async function api(url, opts={}){opts.headers={...(opts.headers||{})};if(opts.body&&!opts.headers['Content-Type'])opts.headers['Content-Type']='application/json';if(opts.method&&opts.method!=='GET')opts.headers['X-CSRF-Token']=csrf;const r=await fetch(url,opts);let data=null;try{data=await r.json()}catch{}if(!r.ok)throw new Error(data?.detail||`HTTP ${r.status}`);return data}
+function badge(v){const map={running:['运行中','ok'],scheduled:['已预约','info'],completed:['完成',''],closed:['完成',''],canceled:['取消',''],available:['可用','ok'],repair:['维修','warn'],disabled:['停用','danger'],open:['待处理','danger'],handling:['处理中','warn'],resolved:['已解决','ok'],connected:['已接入','ok'],reserved:['预留','info'],manual:['人工链路','warn'],offline:['离线导入','']};const x=map[v]||[v||'—',''];return `<span class="badge ${x[1]}">${esc(x[0])}</span>`}
+function fmtTime(s){if(!s)return '—';try{return new Date(s).toLocaleString('zh-CN',{hour12:false})}catch{return s}}
+function showTab(name){activeTab=name;document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.tab===name));document.querySelectorAll('.tabpage').forEach(x=>x.classList.add('hidden'));$('tab-'+name).classList.remove('hidden');loadTab(name)}
+async function login(){try{const data=await api('/api/v1/web/login',{method:'POST',body:JSON.stringify({username:$('loginUser').value,password:$('loginPassword').value})});csrf=data.csrf_token;me=data.user;enterApp()}catch(e){$('loginError').textContent=e.message}}
+async function enterApp(){if(!me){try{const x=await api('/api/v1/web/me');csrf=x.csrf_token;me=x}catch{return}}$('loginView').classList.add('hidden');$('appView').classList.remove('hidden');$('who').textContent=`${me.display_name||me.username} · ${me.role.toUpperCase()}`;await loadTab(activeTab)}
+async function logout(){try{await api('/api/v1/web/logout',{method:'POST',body:'{}'})}catch{}location.reload()}
+async function loadTab(name){try{if(name==='overview')await renderDashboard();if(name==='subjects')await renderSubjects();if(name==='candidates')await renderCandidates();if(name==='devices')await renderDevices();if(name==='incidents')await renderIncidents();if(name==='sources')await renderSources();if(name==='architecture')await renderArchitecture()}catch(e){toast(e.message)}}
+async function renderDashboard(){const d=await api('/api/v1/web/dashboard');const labels=[['候选池','candidates'],['已预约','scheduled'],['运行中','running'],['开放异常','open_incidents'],['可用设备包','available_packs'],['已有GPS被试','gps_subjects']];$('metrics').innerHTML=labels.map(([l,k])=>`<div class="metric"><div class="label">${l}</div><div class="value">${d.metrics[k]}</div></div>`).join('');$('runningList').innerHTML=d.running.length?d.running.map(x=>`<div class="issue"><div class="issue-title"><strong>${esc(x.participant_id)}</strong>${badge(x.status)}</div><p>${esc(x.pack_id||'未绑定设备')} · GPS ${x.gps_last_received_at_utc?`最近 ${fmtTime(x.gps_last_received_at_utc)}`:'暂无回传'}</p></div>`).join(''):'<div class="muted">暂无运行中被试</div>';$('attentionList').innerHTML=d.incidents.length?d.incidents.map(x=>`<div class="issue"><div class="issue-title"><strong>${esc(x.participant_id||'—')} · ${esc(x.summary||x.incident_type)}</strong>${badge(x.status)}</div><p>${esc(x.source)} · ${esc(x.date_local)}</p></div>`).join(''):'<div class="muted">暂无开放异常</div>'}
+async function renderCandidates(){const a=await api('/api/v1/web/candidates');$('candidateRows').innerHTML=a.map(x=>`<tr><td>${esc(x.name||'—')}</td><td>${esc(x.phone)}<br><span class="muted">${esc(x.wechat)}</span></td><td>${esc(x.source)}</td><td>${esc([x.sex,x.age_group,x.identity_type].filter(Boolean).join(' · '))}</td><td>${esc([x.work_district,x.home_district].filter(Boolean).join(' / '))}</td><td>${esc(x.phone_os)}</td><td>${esc(x.linked_participant_id||'—')}</td><td>${x.linked_participant_id?'已入组':`<button class="btn small" data-promote="${esc(x.candidate_uid)}">赋ID/预约</button>`}</td></tr>`).join('');document.querySelectorAll('[data-promote]').forEach(b=>b.addEventListener('click',()=>openPromote(b.dataset.promote)))}
+async function addCandidate(){const body={name:$('cName').value,phone:$('cPhone').value,wechat:$('cWechat').value,source:$('cSource').value,sex:$('cSex').value,age_group:$('cAge').value,identity_type:$('cIdentity').value,phone_os:$('cOs').value,work_district:$('cWork').value,home_district:$('cHome').value,availability:$('cAvail').value,notes:$('cNotes').value};await api('/api/v1/web/candidates',{method:'POST',body:JSON.stringify(body)});toast('已加入候选池');await renderCandidates()}
+function openPromote(uid){selectedCandidate=uid;const t=new Date().toISOString().slice(0,10);$('pStart').value=t;const e=new Date();e.setDate(e.getDate()+13);$('pEnd').value=e.toISOString().slice(0,10);$('promoteDialog').showModal()}
+async function promote(){const body={participant_id:$('pId').value,batch_id:$('pBatch').value,expected_start:$('pStart').value,expected_end:$('pEnd').value,pack_id:$('pPack').value,assigned_ra:$('pRa').value};await api(`/api/v1/web/candidates/${selectedCandidate}/promote`,{method:'POST',body:JSON.stringify(body)});$('promoteDialog').close();toast('已创建预约');await renderCandidates()}
+async function renderSubjects(){const a=await api('/api/v1/web/subjects');$('subjectRows').innerHTML=a.map(x=>`<tr><td><strong>${esc(x.participant_id)}</strong></td><td>${esc(x.name||'—')}<br><span class="muted">${esc(x.phone||'')}</span></td><td>${badge(x.status)}</td><td>${esc(x.start_date||x.expected_start||'—')} → ${esc(x.end_date||x.expected_end||'—')}</td><td>${esc(x.pack_id||'—')}</td><td>${esc(x.assigned_ra||'—')}</td><td>${x.gps_last_received_at_utc?fmtTime(x.gps_last_received_at_utc):'暂无'}</td><td><div class="row">${x.status==='scheduled'?`<button class="btn small" data-start="${x.participant_id}" data-pack="${esc(x.pack_id)}">启动</button>`:''}<button class="btn small" data-gps="${x.participant_id}">GPS凭据</button></div></td></tr>`).join('');document.querySelectorAll('[data-start]').forEach(b=>b.addEventListener('click',()=>openStart(b.dataset.start,b.dataset.pack)));document.querySelectorAll('[data-gps]').forEach(b=>b.addEventListener('click',()=>createGps(b.dataset.gps)))}
+async function createGps(pid){if(!confirm(`为 ${pid} 创建一次性 GPS 密码？密码只显示这一次。`))return;try{const x=await api(`/api/v1/web/subjects/${pid}/gps-credential`,{method:'POST',body:'{}'});alert(`OwnTracks Username: ${pid}\nPassword: ${x.password}\n\n请立即保存，服务器只存 hash。`)}catch(e){alert(e.message)}}
+function openStart(pid,pack){selectedSubject=pid;$('sPack').value=pack||'';const t=new Date().toISOString().slice(0,10);$('sStart').value=t;const e=new Date();e.setDate(e.getDate()+13);$('sEnd').value=e.toISOString().slice(0,10);$('startDialog').showModal()}
+async function startSubject(){await api(`/api/v1/web/subjects/${selectedSubject}/start`,{method:'POST',body:JSON.stringify({pack_id:$('sPack').value,start_date:$('sStart').value,end_date:$('sEnd').value})});$('startDialog').close();toast('已启动运行');await renderSubjects()}
+async function renderDevices(){const a=await api('/api/v1/web/devices');$('deviceRows').innerHTML=a.map(x=>`<tr><td><strong>${esc(x.pack_id)}</strong></td><td>${badge(x.status)}</td><td>${esc(x.current_participant_id||'—')}</td><td>${esc(x.light_serial||'—')}</td><td>${esc(x.ax3_serial||'—')}</td><td>${esc(x.issued_date||'—')}</td><td>${esc(x.expected_return_date||'—')}</td><td>${esc(x.notes||'')}</td></tr>`).join('')}
+async function saveDevice(){await api('/api/v1/web/devices',{method:'POST',body:JSON.stringify({pack_id:$('dPack').value,status:$('dStatus').value,light_serial:$('dLight').value,ax3_serial:$('dAx3').value,notes:$('dNotes').value})});toast('设备包已保存');await renderDevices()}
+async function renderIncidents(){const a=await api('/api/v1/web/incidents');$('incidentList').innerHTML=a.length?a.map(x=>`<div class="issue"><div class="issue-title"><div><strong>${esc(x.participant_id||'—')} · ${esc(x.summary||x.incident_type)}</strong> ${badge(x.status)}</div><span class="muted">${esc(x.date_local)}</span></div><p>${esc(x.source)} · ${esc(x.notes||'')}</p><div class="row" style="margin-top:7px">${x.status==='open'?`<button class="btn small" data-istatus="${x.incident_uid}" data-v="handling">标记处理中</button>`:''}${x.status!=='closed'?`<button class="btn small" data-istatus="${x.incident_uid}" data-v="closed">关闭</button>`:''}</div></div>`).join(''):'<div class="muted">暂无异常</div>';document.querySelectorAll('[data-istatus]').forEach(b=>b.addEventListener('click',()=>setIncidentStatus(b.dataset.istatus,b.dataset.v)))}
+async function addIncident(){await api('/api/v1/web/incidents',{method:'POST',body:JSON.stringify({participant_id:$('iPid').value,date_local:$('iDate').value,source:$('iSource').value,incident_type:$('iType').value,severity:$('iSeverity').value,summary:$('iSummary').value,notes:$('iNotes').value})});toast('已加入异常中心');await renderIncidents()}
+async function setIncidentStatus(uid,v){await api(`/api/v1/web/incidents/${uid}/status`,{method:'POST',body:JSON.stringify({status:v})});await renderIncidents()}
+async function renderSources(){const a=await api('/api/v1/web/data-sources');$('sourceGrid').innerHTML=a.map(x=>`<div class="source"><div class="row" style="justify-content:space-between"><div class="name">${esc(x.name)}</div>${badge(x.status)}</div><dl><dt>进入方式</dt><dd>${esc(x.acquisition)}</dd><dt>存储</dt><dd>${esc(x.storage)}</dd><dt>自动化</dt><dd>${esc(x.automation)}</dd>${x.records!==null?`<dt>当前记录</dt><dd>${x.records}</dd>`:''}${x.last_event?`<dt>最近事件</dt><dd>${fmtTime(x.last_event)}</dd>`:''}</dl></div>`).join('')}
+async function renderArchitecture(){const x=await api('/api/v1/web/architecture');$('architectureView').innerHTML=`<div class="arch"><div class="arch-row"><div class="node"><div class="k">People</div><strong>PI / RA</strong><span class="muted">浏览器维护实验运营</span></div><div class="node"><div class="k">Participant</div><strong>Participants</strong><span class="muted">OwnTracks / 上传 / 问卷</span></div><div class="node"><div class="k">Interface</div><strong>LEHUE Web Admin</strong><span class="muted">同一可视化管理入口</span></div><div class="node"><div class="k">Backend</div><strong>FastAPI</strong><span class="muted">身份、状态、API、规则</span></div></div><div class="arrow">↓</div><div class="arch-row"><div class="node"><div class="k">Realtime source</div><strong>GPS / OwnTracks</strong><span class="muted">已接入</span></div><div class="node"><div class="k">Large file source</div><strong>Lighting / OSS</strong><span class="muted">接口预留</span></div><div class="node"><div class="k">Manual source</div><strong>问卷星</strong><span class="muted">人工下载 → 自动导入（预留）</span></div><div class="node"><div class="k">Offline source</div><strong>AX3</strong><span class="muted">回收后导入（预留）</span></div></div><div class="arrow">↓</div><div class="arch-row"><div class="node"><div class="k">Sensitive</div><strong>Identity DB</strong><span class="muted">姓名、电话、管理员账号</span></div><div class="node"><div class="k">Pseudonymous</div><strong>Operations + GPS DB</strong><span class="muted">被试ID、设备、异常、GPS</span></div><div class="node"><div class="k">Future raw vault</div><strong>OSS</strong><span class="muted">大体量原始文件</span></div><div class="node"><div class="k">Scientific analysis</div><strong>Local workstation</strong><span class="muted">科研QC与统计分析不搬云端</span></div></div><div class="card" style="box-shadow:none;margin:8px 0 0;background:var(--soft2)"><strong>边界：</strong> ${esc(x.principle)}</div></div>`}
+
+$('loginBtn').addEventListener('click',login);$('loginPassword').addEventListener('keydown',e=>{if(e.key==='Enter')login()});$('logoutBtn').addEventListener('click',logout);$('refreshBtn').addEventListener('click',()=>loadTab(activeTab));$('tabs').addEventListener('click',e=>{const b=e.target.closest('[data-tab]');if(b)showTab(b.dataset.tab)});$('addCandidateBtn').addEventListener('click',addCandidate);$('promoteSubmit').addEventListener('click',promote);$('startSubmit').addEventListener('click',startSubject);$('saveDeviceBtn').addEventListener('click',saveDevice);$('addIncidentBtn').addEventListener('click',addIncident);document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',()=>$(b.dataset.close).close()));
+enterApp();
+</script>
+</body>
+</html>
