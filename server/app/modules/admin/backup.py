@@ -49,6 +49,7 @@ def create_system_backup() -> tuple[str, str]:
             "incidents": conn.execute("SELECT COUNT(*) n FROM incidents").fetchone()["n"],
             "gps_locations": conn.execute("SELECT COUNT(*) n FROM gps_locations").fetchone()["n"],
             "questionnaire_responses": conn.execute("SELECT COUNT(*) n FROM questionnaire_responses").fetchone()["n"],
+            "lighting_files": conn.execute("SELECT COUNT(*) n FROM lighting_files").fetchone()["n"],
             "raw_events": conn.execute("SELECT COUNT(*) n FROM raw_events").fetchone()["n"],
         }
     with identity_db() as conn:
@@ -56,6 +57,7 @@ def create_system_backup() -> tuple[str, str]:
             "admin_users": conn.execute("SELECT COUNT(*) n FROM admin_users").fetchone()["n"],
             "candidates": conn.execute("SELECT COUNT(*) n FROM candidates").fetchone()["n"],
             "contact_logs": conn.execute("SELECT COUNT(*) n FROM contact_logs").fetchone()["n"],
+            "s0_imports": conn.execute("SELECT COUNT(*) n FROM s0_imports").fetchone()["n"],
         })
 
     generated = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -65,7 +67,7 @@ def create_system_backup() -> tuple[str, str]:
         "generated_at_utc": generated,
         "study_timezone": settings.study_timezone,
         "contents": ["lehue.sqlite3", "lehue_identity.sqlite3"],
-        "excluded": ["web_sessions", "server/data/raw/gps JSONL mirror"],
+        "excluded": ["web_sessions", "server/data/raw/gps JSONL mirror", "server/data/raw/lighting files"],
         "counts": counts,
         "sha256": {"lehue.sqlite3": _sha256(main_copy), "lehue_identity.sqlite3": _sha256(identity_copy)},
         "note": "Sensitive backup: contains identity/contact data, GPS records and questionnaire responses. Store securely.",

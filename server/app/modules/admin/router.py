@@ -186,6 +186,14 @@ async def create_candidate(request: Request, operator=Depends(require_operator_w
     return {"candidate_uid": service.add_candidate(await request.json(), operator.username)}
 
 
+@router.post("/api/v1/web/candidates/import-s0")
+async def import_s0(request: Request, operator=Depends(require_operator_write)):
+    try:
+        return service.import_s0_file(await request.json(), operator.username)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @router.post("/api/v1/web/candidates/{candidate_uid}/promote")
 async def promote(candidate_uid: str, request: Request, operator=Depends(require_operator_write)):
     try:
@@ -240,6 +248,29 @@ async def device_upsert(request: Request, operator=Depends(require_operator_writ
 @router.get("/api/v1/web/incidents")
 def incidents(operator=Depends(require_operator)):
     return service.list_incidents()
+
+
+@router.get("/api/v1/web/lighting")
+def lighting_uploads(participant_id: str = "", date_local: str = "", operator=Depends(require_operator)):
+    return service.list_lighting_uploads(participant_id, date_local)
+
+
+@router.post("/api/v1/web/lighting/upload")
+async def lighting_upload(participant_id: str, date_local: str, filename: str, request: Request, operator=Depends(require_operator_write)):
+    try:
+        return service.upload_lighting(participant_id, date_local, filename, await request.body(), operator.username)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/api/v1/web/daily-qc")
+def daily_qc(operator=Depends(require_operator)):
+    return service.daily_qc(False)
+
+
+@router.post("/api/v1/web/daily-qc/run")
+def daily_qc_run(operator=Depends(require_operator_write)):
+    return service.daily_qc(True, operator.username)
 
 
 @router.post("/api/v1/web/incidents")

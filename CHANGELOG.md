@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.5.1 - 2026-08-10
+
+- Replaced the temporary daily questionnaires with the two formal morning and bedtime forms supplied for the study.
+- Moved versioned form definitions and validation into an independent, FastAPI/database-free questionnaire module with stable coded answers.
+- Kept participant ID, date and Study Day server-bound instead of asking participants to re-enter them.
+- Rendered each questionnaire as one mobile-friendly scrolling page with no pagination, including discrete seven-point scales, exclusive multi-select handling and a complete device-status matrix.
+- Added definition/validation tests and participant-portal integration coverage for both formal forms.
+
+## 0.5.0 - 2026-08-10
+
+- Migrated the field-tested ANOLighting V5 Lighting parser and acquisition-QC rules: 7,200 expected records, 90% valid threshold, saturation exclusion, both repeated-key and tabular CSV/XLSX/TXT layouts, and best-file selection per participant/day.
+- Added token-bound Lighting upload to the Participant Portal and an RA backfill API; raw files live under `raw/lighting`, while parser/QC metadata stays in the existing operations SQLite database.
+- Added a derived daily acquisition-QC view using the V5 exposure-day rule (evening questionnaire + Lighting + GPS + next-morning questionnaire), with one-click incident synchronization and `valid_days` refresh.
+- Added S0 Wenjuanxing CSV/XLSX cumulative import with stable merging by sequence/phone/WeChat, willingness filtering, manual-correction preservation, import deduplication, and original-file storage in the identity database.
+- Expanded V5 state migration to retain candidate raw rows, final-morning/close fields, idempotent operational upserts, and optional raw Lighting import.
+- Added read-only historical compatibility tooling. All 26 cached Lighting summaries in the V5 test corpus match the new parser exactly.
+
 ## 0.4.0 - 2026-08-10
 
 - Added a token-based Participant Portal at `/p/<token>` inspired by the existing ANOLighting participant task console.

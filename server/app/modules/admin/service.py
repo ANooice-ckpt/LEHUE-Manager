@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import re
 import secrets
+import base64
+import binascii
 from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -12,6 +14,8 @@ from app.core.db import db
 from app.core.identity_db import identity_db
 from app.core.security import generate_secret, hash_secret
 from app.modules.participant import service as participant_service
+from app.modules.questionnaire import s0_import
+from app.modules.light import service as light_service
 
 SUBJECT_RE = re.compile(r"^\d{3}$")
 PACK_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{1,15}$")
@@ -47,7 +51,7 @@ def _questionnaire_counts(conn, participant_ids: list[str], date_local: str) -> 
 def dashboard() -> dict[str, Any]:
     today = local_today()
     with identity_db() as conn:
-        candidates = conn.execute("SELECT COUNT(*) n FROM candidates").fetchone()["n"]
+        candidates = conn.execute("SELECT COUNT(*) n FROM candidates WHERE in_latest_snapshot=1 OR linked_participant_id IS NOT NULL").fetchone()["n"]
     with db() as conn:
         active = conn.execute("SELECT COUNT(*) n FROM study_subjects WHERE status='running'").fetchone()["n"]
         scheduled = conn.execute("SELECT COUNT(*) n FROM study_subjects WHERE status='scheduled'").fetchone()["n"]
@@ -81,7 +85,27 @@ def dashboard() -> dict[str, Any]:
 
 def list_candidates():
     with identity_db() as conn:
-        return [dict(r) for r in conn.execute("SELECT * FROM candidates ORDER BY updated_at_utc DESC")]
+        return [dict(r) for r in conn.execute(
+            """SELECT candidate_uid,linked_participant_id,name,phone,wechat,source,sex,age_group,
+                      identity_type,light_type,work_district,home_district,phone_os,pickup_method,
+                      availability,notes,source_seq,in_latest_snapshot,created_at_utc,updated_at_utc
+               FROM candidates
+               ORDER BY in_latest_snapshot DESC, linked_participant_id IS NOT NULL DESC, updated_at_utc DESC"""
+        )]
+
+
+def import_s0_file(data: dict[str, Any], operator: str) -> dict:
+    filename = str(data.get("filename") or "").strip()
+    encoded = str(data.get("content_b64") or "")
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ValueError("S0 文件内容不是有效的 base64") from exc
+    if len(raw) > 20 * 1024 * 1024:
+        raise ValueError("S0 文件超过 20 MB，请确认选择了正确的问卷星累计表")
+    result = s0_import.import_s0(filename, raw, operator)
+    audit(operator, "s0.import", "s0_import", result["import_uid"], {key: result[key] for key in ("total", "imported", "filtered", "duplicate")})
+    return result
 
 
 def add_candidate(data: dict[str, Any], operator: str):
@@ -106,6 +130,7 @@ def list_subjects():
         for row in rows:
             row["gps_last_received_at_utc"] = conn.execute("SELECT MAX(received_at_utc) x FROM gps_locations WHERE participant_id=?", (row["participant_id"],)).fetchone()["x"]
             row["questionnaire_today_completed"] = counts.get(row["participant_id"], 0)
+            row["lighting_today"] = light_service.portal_light_state(row["participant_id"], today)
             row["portal_enabled"] = bool(row.get("portal_token_id"))
             for secret_field in ("portal_token_id", "portal_token_salt", "portal_token_hash", "portal_token_created_at_utc"):
                 row.pop(secret_field, None)
@@ -234,7 +259,7 @@ def architecture() -> dict[str, Any]:
             {"id":"api","label":"FastAPI backend","kind":"service"},
             {"id":"gps","label":"GPS / OwnTracks","kind":"source"},
             {"id":"questionnaire","label":"LEHUE native questionnaire","kind":"source"},
-            {"id":"light","label":"Lighting upload / OSS (reserved)","kind":"source"},
+            {"id":"light","label":"Lighting upload + acquisition QC","kind":"source"},
             {"id":"ax3","label":"AX3 return + local import (reserved)","kind":"source"},
             {"id":"identity","label":"Identity DB","kind":"storage"},
             {"id":"study","label":"Operations + GPS + Questionnaire DB","kind":"storage"},
@@ -250,10 +275,38 @@ def data_sources() -> list[dict[str, Any]]:
         gps_last = conn.execute("SELECT MAX(received_at_utc) x FROM gps_locations").fetchone()["x"]
         q_count = conn.execute("SELECT COUNT(*) n FROM questionnaire_responses").fetchone()["n"]
         q_last = conn.execute("SELECT MAX(submitted_at_utc) x FROM questionnaire_responses").fetchone()["x"]
+    light = light_service.source_stats()
     return [
         {"key":"gps","name":"GPS","status":"connected","acquisition":"OwnTracks HTTP/HTTPS realtime","storage":"lehue.sqlite3 + raw JSONL","automation":"Realtime ingest + acquisition QC","last_event":gps_last,"records":gps_count},
         {"key":"questionnaire","name":"Questionnaire","status":"connected","acquisition":"LEHUE participant portal /p/<token>","storage":"lehue.sqlite3 / questionnaire_responses","automation":"Identity + Study Day + submission status are automatic","last_event":q_last,"records":q_count},
-        {"key":"light","name":"Lighting","status":"reserved","acquisition":"Participant manual upload","storage":"Future OSS raw objects + server metadata","automation":"Parser/QC adapter reserved","last_event":None,"records":None},
+        {"key":"light","name":"Lighting","status":"connected","acquisition":"Participant portal or RA backfill upload","storage":"raw/lighting files + lehue.sqlite3 metadata","automation":"V5-compatible parser + 7200/90% acquisition QC","last_event":light["last_event"],"records":light["records"]},
         {"key":"ax3","name":"AX3","status":"offline","acquisition":"Device return → batch download","storage":"Local/raw archive; cloud status only","automation":"Post-return ingest reserved","last_event":None,"records":None},
         {"key":"identity","name":"Identity & contact","status":"connected","acquisition":"PI/RA Web Admin","storage":"lehue_identity.sqlite3","automation":"Separated from GPS/research records","last_event":None,"records":None},
     ]
+
+
+def list_lighting_uploads(participant_id: str = "", date_local: str = ""):
+    return light_service.list_uploads(participant_id, date_local)
+
+
+def upload_lighting(participant_id: str, date_local: str, filename: str, raw: bytes, operator: str):
+    result = light_service.store_upload(participant_id, date_local, filename, raw, f"admin:{operator}")
+    audit(operator, "lighting.upload", "lighting_file", result["upload_uid"], {"participant_id": participant_id, "date_local": date_local, "quality": result["quality"]})
+    return result
+
+
+def daily_qc(run: bool, operator: str = ""):
+    if not run:
+        rows = light_service.daily_qc_rows()
+        return {
+            "rows": rows,
+            "summary": {
+                "total": len(rows),
+                "ok": sum(row["status"] == "ok" for row in rows),
+                "missing": sum(row["status"] == "missing" for row in rows),
+                "pending": sum(row["status"] == "pending" for row in rows),
+            },
+        }
+    result = light_service.run_daily_qc(operator)
+    audit(operator, "acquisition_qc.run", "daily_qc", "", result["summary"])
+    return result

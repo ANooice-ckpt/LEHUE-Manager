@@ -54,9 +54,9 @@ def root():
         "project": settings.project_name,
         "service": "lehue-manager-backend",
         "version": settings.app_version,
-        "implemented_modules": ["gps", "web_admin", "participant_portal", "questionnaire"],
+        "implemented_modules": ["gps", "web_admin", "participant_portal", "questionnaire", "lighting", "acquisition_qc", "s0_import"],
         "study_timezone": settings.study_timezone,
-        "reserved_modules": ["light", "qc"],
+        "reserved_modules": ["ax3"],
     }
 
 
@@ -67,6 +67,7 @@ def health():
             count = conn.execute("SELECT COUNT(*) AS n FROM gps_locations").fetchone()["n"]
             raw_count = conn.execute("SELECT COUNT(*) AS n FROM raw_events").fetchone()["n"]
             questionnaire_count = conn.execute("SELECT COUNT(*) AS n FROM questionnaire_responses").fetchone()["n"]
+            lighting_count = conn.execute("SELECT COUNT(*) AS n FROM lighting_files").fetchone()["n"]
             archive_failures = conn.execute(
                 "SELECT COUNT(*) AS n FROM raw_events WHERE archive_ok=0"
             ).fetchone()["n"]
@@ -80,6 +81,7 @@ def health():
             "database": "ok",
             "gps_location_count": count,
             "questionnaire_response_count": questionnaire_count,
+            "lighting_file_count": lighting_count,
             "raw_event_count": raw_count,
             "raw_archive_failures": archive_failures,
             "last_event_received_at_utc": last["received_at_utc"] if last else None,

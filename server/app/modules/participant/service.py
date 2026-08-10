@@ -9,31 +9,8 @@ from zoneinfo import ZoneInfo
 from app.core.config import settings
 from app.core.db import db
 from app.core.security import hash_secret, verify_secret
-
-FORM_VERSION = "test_v1"
-FORMS = {
-    "morning": {
-        "key": "morning",
-        "title": "晨间睡眠记录",
-        "description": "起床后填写 · 当前为系统联调测试版",
-        "questions": [
-            {"key": "sleep_duration_hours", "type": "number", "label": "昨晚大约睡了多少小时？", "min": 0, "max": 16, "step": 0.1, "required": True, "unit": "小时"},
-            {"key": "sleep_quality", "type": "scale", "label": "昨晚整体睡眠质量如何？", "min": 1, "max": 5, "required": True, "low": "很差", "high": "很好"},
-            {"key": "sleepiness", "type": "scale", "label": "此刻困倦程度", "min": 0, "max": 10, "required": True, "low": "完全不困", "high": "非常困"},
-        ],
-    },
-    "evening": {
-        "key": "evening",
-        "title": "睡前状态记录",
-        "description": "睡前填写 · 当前为系统联调测试版",
-        "questions": [
-            {"key": "mood", "type": "scale", "label": "此刻整体情绪", "min": 0, "max": 10, "required": True, "low": "很差", "high": "很好"},
-            {"key": "stress", "type": "scale", "label": "今天整体压力程度", "min": 0, "max": 10, "required": True, "low": "没有压力", "high": "压力很大"},
-            {"key": "fatigue", "type": "scale", "label": "此刻疲劳程度", "min": 0, "max": 10, "required": True, "low": "完全不累", "high": "非常疲劳"},
-            {"key": "notes", "type": "text", "label": "今天是否有需要主试知道的特殊情况？", "required": False, "placeholder": "可留空"},
-        ],
-    },
-}
+from app.modules.light import service as light_service
+from app.modules.questionnaire import FORM_VERSION, get_form, list_forms, validate_answers
 
 
 def now_iso() -> str:
@@ -133,7 +110,8 @@ def portal_state(token: str) -> dict:
             )
         }
     forms = []
-    for key, definition in FORMS.items():
+    for definition in list_forms():
+        key = definition["key"]
         forms.append({
             **definition,
             "version": FORM_VERSION,
@@ -148,38 +126,34 @@ def portal_state(token: str) -> dict:
         "study_day": study_day,
         "total_days": total_days,
         "gps": _gps_state(subject["participant_id"]),
+        "lighting": light_service.portal_light_state(subject["participant_id"], date_local),
         "forms": forms,
         "notice": "这是 LEHUE 被试专属工作入口。链接本身用于识别身份，请勿转发给他人。",
     }
 
 
-def _validate_answers(form: dict, answers: dict) -> dict:
-    normalized: dict = {}
-    allowed = {q["key"]: q for q in form["questions"]}
-    for key, q in allowed.items():
-        value = answers.get(key)
-        if q.get("required") and (value is None or value == ""):
-            raise ValueError(f"请完成：{q['label']}")
-        if value is None or value == "":
-            normalized[key] = ""
-            continue
-        if q["type"] in {"scale", "number"}:
-            try:
-                number = float(value)
-            except (TypeError, ValueError):
-                raise ValueError(f"无效答案：{q['label']}")
-            if number < float(q.get("min", number)) or number > float(q.get("max", number)):
-                raise ValueError(f"答案超出范围：{q['label']}")
-            if q["type"] == "scale" and number.is_integer():
-                normalized[key] = int(number)
-            else:
-                normalized[key] = number
-        else:
-            text = str(value).strip()
-            if len(text) > 2000:
-                raise ValueError(f"文本过长：{q['label']}")
-            normalized[key] = text
-    return normalized
+def submit_lighting(token: str, date_local: str, filename: str, raw: bytes) -> dict:
+    subject = _resolve_subject(token)
+    if not subject:
+        raise LookupError("invalid participant link")
+    if subject["status"] != "running":
+        raise ValueError("实验尚未处于运行状态，当前不能上传 Lighting")
+    try:
+        exposure_day = date.fromisoformat(date_local)
+    except ValueError as exc:
+        raise ValueError("Lighting 暴露日期必须使用 YYYY-MM-DD") from exc
+    today = local_today()
+    if exposure_day > today:
+        raise ValueError("不能上传未来日期的 Lighting 文件")
+    start_raw = subject["start_date"] or subject["expected_start"]
+    if start_raw:
+        try:
+            start_day = date.fromisoformat(start_raw)
+        except ValueError:
+            start_day = None
+        if start_day and exposure_day < start_day:
+            raise ValueError("所选日期早于实验开始日期")
+    return light_service.store_upload(subject["participant_id"], date_local, filename, raw, "participant_portal")
 
 
 def submit_questionnaire(token: str, form_key: str, answers: dict) -> dict:
@@ -188,13 +162,13 @@ def submit_questionnaire(token: str, form_key: str, answers: dict) -> dict:
         raise LookupError("invalid participant link")
     if subject["status"] != "running":
         raise ValueError("实验尚未处于运行状态，当前不能提交每日问卷")
-    form = FORMS.get(form_key)
+    form = get_form(form_key)
     if not form:
         raise LookupError("questionnaire not found")
     date_local, study_day, _ = _study_clock(subject)
     if study_day < 1:
         raise ValueError("实验尚未开始")
-    normalized = _validate_answers(form, answers or {})
+    normalized = validate_answers(form, answers or {})
     submitted = now_iso()
     try:
         with db() as conn:

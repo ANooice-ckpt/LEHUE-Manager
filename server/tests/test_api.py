@@ -23,6 +23,12 @@ def test_end_to_end(monkeypatch):
         importlib.reload(service)
         import app.modules.gps.router as router
         importlib.reload(router)
+        import app.modules.light.service as light
+        importlib.reload(light)
+        import app.modules.questionnaire.s0_import as s0
+        importlib.reload(s0)
+        import app.modules.participant.service as portal
+        importlib.reload(portal)
         import app.main as main
         importlib.reload(main)
 

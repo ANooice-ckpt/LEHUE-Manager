@@ -20,6 +20,8 @@ def test_participant_portal_questionnaire_flow(monkeypatch):
         import app.core.identity_db as idb; importlib.reload(idb)
         import app.core.security as sec; importlib.reload(sec)
         import app.core.web_security as ws; importlib.reload(ws)
+        import app.modules.light.service as light; importlib.reload(light)
+        import app.modules.questionnaire.s0_import as s0; importlib.reload(s0)
         import app.modules.gps.service as gps; importlib.reload(gps)
         import app.modules.participant.service as portal; importlib.reload(portal)
         import app.modules.participant.router as portal_router; importlib.reload(portal_router)
@@ -50,18 +52,30 @@ def test_participant_portal_questionnaire_flow(monkeypatch):
             assert data["status"] == "running"
             assert data["gps"]["status"] == "never"
             assert [x["key"] for x in data["forms"]] == ["morning", "evening"]
+            assert [len(x["questions"]) for x in data["forms"]] == [10, 6]
+            assert all(x["version"] == "formal_v1" for x in data["forms"])
             assert all(not x["completed"] for x in data["forms"])
             # Participant ID is intentionally not exposed in participant-facing state.
             assert "participant_id" not in data
 
             morning = client.post(
                 f"/api/v1/portal/{token}/questionnaires/morning",
-                json={"answers": {"sleep_duration_hours": 7.5, "sleep_quality": 4, "sleepiness": 3}},
+                json={"answers": {
+                    "bedtime": "23:15", "wake_time": "07:10", "alertness": "alert",
+                    "sleep_quality": 1, "sleep_recovery": 2, "sleep_continuity": 1,
+                    "sleep_sufficiency": 2, "sleep_onset_ease": 1, "wake_ease": 2,
+                    "sleep_influences": ["none"],
+                }},
             )
             assert morning.status_code == 200
             duplicate = client.post(
                 f"/api/v1/portal/{token}/questionnaires/morning",
-                json={"answers": {"sleep_duration_hours": 7.5, "sleep_quality": 4, "sleepiness": 3}},
+                json={"answers": {
+                    "bedtime": "23:15", "wake_time": "07:10", "alertness": "alert",
+                    "sleep_quality": 1, "sleep_recovery": 2, "sleep_continuity": 1,
+                    "sleep_sufficiency": 2, "sleep_onset_ease": 1, "wake_ease": 2,
+                    "sleep_influences": ["none"],
+                }},
             )
             assert duplicate.status_code == 400
 

@@ -1,0 +1,41 @@
+# Keep repository text stable across Windows development and Linux deployment.
+* text=auto
+
+.gitattributes text eol=lf
+.gitignore text eol=lf
+.dockerignore text eol=lf
+.env.example text eol=lf
+.env.*.example text eol=lf
+*.py text eol=lf
+*.js text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+requirements*.txt text eol=lf
+Dockerfile text eol=lf
+Caddyfile text eol=lf
+*.sh text eol=lf
+
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.xls binary
+*.xlsx binary
+*.zip binary
+*.db binary
+*.sqlite binary
+*.sqlite3 binary
+
+# Preserve legacy regression inputs byte-for-byte, including original encoding.
+server/tests/fixtures/** -text
+server/tests/fixtures/**/*.md text eol=lf

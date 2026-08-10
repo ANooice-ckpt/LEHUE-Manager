@@ -1,5 +1,6 @@
 import importlib
 import io
+import base64
 import tempfile
 import zipfile
 from pathlib import Path
@@ -18,6 +19,8 @@ def _reload_stack(monkeypatch, td: str, domain: str = "localhost"):
     import app.core.identity_db as idb; importlib.reload(idb)
     import app.core.security as sec; importlib.reload(sec)
     import app.core.web_security as ws; importlib.reload(ws)
+    import app.modules.light.service as light; importlib.reload(light)
+    import app.modules.questionnaire.s0_import as s0; importlib.reload(s0)
     import app.modules.gps.service as gps; importlib.reload(gps)
     import app.modules.participant.service as portal; importlib.reload(portal)
     import app.modules.participant.router as portal_router; importlib.reload(portal_router)
@@ -59,6 +62,12 @@ def test_web_admin_flow(monkeypatch):
             users = client.get('/api/v1/web/users').json()
             assert {u['username'] for u in users} == {'pi', 'ra01'}
 
+            s0_csv = '序号,您的年龄,您的性别,16、您是否愿意参与本研究并接受补贴？,19、您的手机号（仅实验负责人可见）：\n1,20-29,女,愿意,13800000001\n'.encode('utf-8-sig')
+            s0_result = client.post('/api/v1/web/candidates/import-s0', json={
+                'filename': 's0.csv', 'content_b64': base64.b64encode(s0_csv).decode()
+            }, headers=h)
+            assert s0_result.status_code == 200 and s0_result.json()['imported'] == 1
+
             r = client.post('/api/v1/web/candidates', json={'name':'Test','phone':'123','phone_os':'iOS'}, headers=h)
             assert r.status_code == 200; cuid = r.json()['candidate_uid']
             assert client.post('/api/v1/web/devices', json={'pack_id':'D01','status':'available','light_serial':'L01','ax3_serial':'A01'}, headers=h).status_code == 200
@@ -70,6 +79,13 @@ def test_web_admin_flow(monkeypatch):
             assert portal.status_code == 200 and portal.json()['path'].startswith('/p/')
             assert '/001' not in portal.json()['path']
             assert client.post('/api/v1/web/subjects/001/start', json={'pack_id':'D01','start_date':'2026-09-01','end_date':'2026-09-14'}, headers=h).status_code == 200
+            light = client.post(
+                '/api/v1/web/lighting/upload?participant_id=001&date_local=2026-09-01&filename=001_20260901_LIGHT.csv',
+                content=b'Photopic Lux,Melanopic,Is Saturate\n100,80,No\n', headers=h,
+            )
+            assert light.status_code == 200 and light.json()['quality'] == 'insufficient'
+            assert len(client.get('/api/v1/web/lighting').json()) == 1
+            assert client.get('/api/v1/web/daily-qc').status_code == 200
             assert client.post('/api/v1/web/incidents', json={'participant_id':'001','date_local':'2026-09-02','source':'GPS','incident_type':'offline','summary':'GPS offline'}, headers=h).status_code == 200
             d = client.get('/api/v1/web/dashboard').json()
             assert d['metrics']['running'] == 1 and d['metrics']['open_incidents'] == 1

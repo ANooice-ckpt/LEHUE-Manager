@@ -1,4 +1,4 @@
-# LEHUE-Manager v0.4.0
+# LEHUE-Manager v0.5.1
 
 **LEHUE = Light Exposure Histories in Urban Environments**
 
@@ -21,8 +21,9 @@ LEHUE-Manager/
 │   │   ├── modules/
 │   │   │   ├── gps/                # 已实现
 │   │   │   ├── admin/              # Web Admin
-│   │   │   ├── participant/        # v0.4 被试专属入口 + 每日问卷
-│   │   │   ├── light/              # reserved
+│   │   │   ├── participant/        # 被试专属入口与任务编排
+│   │   │   ├── questionnaire/      # 可独立调用的正式问卷定义与校验
+│   │   │   ├── light/              # Lighting 导入与 acquisition QC
 │   │   │   └── qc/                 # reserved
 │   │   └── web/                    # Admin + Participant Portal 页面
 │   ├── scripts/
@@ -34,14 +35,14 @@ LEHUE-Manager/
 └── Caddyfile
 ```
 
-## v0.4.0 当前能力
+## 当前能力
 
 - 保留 v0.3.1 的 Web Admin、PI/RA 登录、非公开账号初始化、系统状态备份。
 - 每个正式被试可在 Admin 中生成一个不可猜测的专属工作入口；重置入口后旧链接立即失效。
 - 被试打开专属链接后无需填写姓名或被试号，服务器自动绑定 participant、研究日期与 Study Day。
-- Participant Portal 参考原 ANOLighting 的移动端单卡片/任务列表结构，首批接入晨间问卷、晚间问卷和 GPS 回传状态。
+- Participant Portal 参考原 ANOLighting 的移动端单卡片/任务列表结构，接入正式晨间/睡前问卷、Lighting 上传和 GPS 回传状态。
 - 问卷不再依赖问卷星/每日 CSV 下载；答案直接写入 `lehue.sqlite3` 的 `questionnaire_responses`。
-- 第一版问卷题目是 **系统联调测试版**，直接由代码配置，不建设复杂问卷设计器。
+- 两份正式问卷由独立 `questionnaire/forms.py` 模块提供，均在一个移动端页面内完成，不建设复杂问卷设计器。
 - Admin 的被试表与 Dashboard 可看到今日问卷完成数；数据源页将 Questionnaire 标记为 LEHUE native connected。
 - 旧 v0.3.x 数据库可原地升级：启动时自动增加 portal token 字段并创建问卷响应表，不清空旧数据。
 - 系统状态备份自动包含问卷响应。
@@ -68,4 +69,4 @@ Set-ExecutionPolicy -Scope Process Bypass
 - `/p/<token>` 的 token 本身就是被试端身份凭据：不可猜测、数据库仅存 hash，但收到链接的人可以代表该被试访问工作入口，因此不要转发或公开。
 - 公网部署只暴露 Caddy 80/443；FastAPI 8000 不直接开放。
 - `/health` 不返回 participant ID、身份信息、坐标或问卷答案。
-- v0.4.0 仍是工程测试版本；正式被试前还需补登录/portal 限速、定时异地备份、恢复演练、正式问卷冻结及隐私流程。
+- 当前仍是工程测试版本；正式被试前还需补登录/portal 限速、定时异地备份、恢复演练及隐私流程。

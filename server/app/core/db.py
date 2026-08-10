@@ -81,6 +81,8 @@ CREATE TABLE IF NOT EXISTS study_subjects (
     completion_type TEXT NOT NULL DEFAULT '',
     compensation TEXT NOT NULL DEFAULT '',
     notes TEXT NOT NULL DEFAULT '',
+    awaiting_final_morning INTEGER NOT NULL DEFAULT 0,
+    close_notes TEXT NOT NULL DEFAULT '',
     portal_token_id TEXT NOT NULL DEFAULT '',
     portal_token_salt TEXT NOT NULL DEFAULT '',
     portal_token_hash TEXT NOT NULL DEFAULT '',
@@ -104,6 +106,38 @@ CREATE TABLE IF NOT EXISTS questionnaire_responses (
 
 CREATE INDEX IF NOT EXISTS idx_questionnaire_participant_date
 ON questionnaire_responses(participant_id, date_local);
+
+CREATE TABLE IF NOT EXISTS lighting_files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    upload_uid TEXT NOT NULL UNIQUE,
+    participant_id TEXT NOT NULL,
+    date_local TEXT NOT NULL,
+    original_filename TEXT NOT NULL,
+    stored_path TEXT NOT NULL,
+    file_size_bytes INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    uploaded_at_utc TEXT NOT NULL,
+    uploaded_by TEXT NOT NULL DEFAULT '',
+    parser_version TEXT NOT NULL,
+    records_expected INTEGER NOT NULL DEFAULT 7200,
+    records_total INTEGER NOT NULL DEFAULT 0,
+    records_valid INTEGER NOT NULL DEFAULT 0,
+    records_saturated INTEGER NOT NULL DEFAULT 0,
+    valid_pct REAL NOT NULL DEFAULT 0,
+    quality TEXT NOT NULL,
+    photopic_mean REAL,
+    photopic_median REAL,
+    photopic_max REAL,
+    melanopic_mean REAL,
+    melanopic_median REAL,
+    melanopic_max REAL,
+    parse_error TEXT NOT NULL DEFAULT '',
+    FOREIGN KEY(participant_id) REFERENCES study_subjects(participant_id) ON DELETE CASCADE,
+    UNIQUE(participant_id, date_local, sha256)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lighting_participant_date
+ON lighting_files(participant_id, date_local, uploaded_at_utc);
 
 CREATE TABLE IF NOT EXISTS device_packs (
     pack_id TEXT PRIMARY KEY,
@@ -154,6 +188,12 @@ PORTAL_COLUMNS = {
     "portal_token_created_at_utc": "TEXT NOT NULL DEFAULT ''",
 }
 
+SUBJECT_COLUMNS = {
+    **PORTAL_COLUMNS,
+    "awaiting_final_morning": "INTEGER NOT NULL DEFAULT 0",
+    "close_notes": "TEXT NOT NULL DEFAULT ''",
+}
+
 
 def connect() -> sqlite3.Connection:
     settings.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -178,9 +218,9 @@ def db():
         conn.close()
 
 
-def _ensure_portal_columns(conn: sqlite3.Connection) -> None:
+def _ensure_subject_columns(conn: sqlite3.Connection) -> None:
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(study_subjects)")}
-    for name, declaration in PORTAL_COLUMNS.items():
+    for name, declaration in SUBJECT_COLUMNS.items():
         if name not in existing:
             conn.execute(f"ALTER TABLE study_subjects ADD COLUMN {name} {declaration}")
     conn.execute(
@@ -192,7 +232,11 @@ def _ensure_portal_columns(conn: sqlite3.Connection) -> None:
 def init_db() -> None:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     settings.raw_archive_dir.mkdir(parents=True, exist_ok=True)
-    with connect() as conn:
+    settings.raw_light_dir.mkdir(parents=True, exist_ok=True)
+    conn = connect()
+    try:
         conn.executescript(SCHEMA)
-        _ensure_portal_columns(conn)
+        _ensure_subject_columns(conn)
         conn.commit()
+    finally:
+        conn.close()

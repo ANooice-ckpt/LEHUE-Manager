@@ -40,6 +40,7 @@
     <button class="tab active" data-tab="overview">总览</button>
     <button class="tab" data-tab="subjects">被试运行</button>
     <button class="tab" data-tab="candidates">候选池</button>
+    <button class="tab" data-tab="qc">每日 QC</button>
     <button class="tab" data-tab="devices">设备包</button>
     <button class="tab" data-tab="incidents">异常</button>
     <button class="tab" data-tab="sources">数据源</button>
@@ -53,12 +54,18 @@
   </section>
 
   <section id="tab-subjects" class="tabpage hidden">
-    <div class="card"><h2>被试运行管理</h2><div class="muted" style="margin-bottom:10px">每个正式被试可生成一个专属工作入口。入口链接本身就是被试身份凭据；重置入口会立即使旧链接失效。</div><div class="table-wrap"><table><thead><tr><th>ID</th><th>姓名</th><th>状态</th><th>计划/实际日期</th><th>设备包</th><th>负责RA</th><th>GPS最近回传</th><th>今日问卷</th><th>工作入口</th><th>操作</th></tr></thead><tbody id="subjectRows"></tbody></table></div></div>
+    <div class="card"><h2>被试运行管理</h2><div class="muted" style="margin-bottom:10px">每个正式被试可生成一个专属工作入口。入口链接本身就是被试身份凭据；重置入口会立即使旧链接失效。</div><div class="table-wrap"><table><thead><tr><th>ID</th><th>姓名</th><th>状态</th><th>计划/实际日期</th><th>设备包</th><th>负责RA</th><th>GPS最近回传</th><th>今日问卷</th><th>今日 Lighting</th><th>工作入口</th><th>操作</th></tr></thead><tbody id="subjectRows"></tbody></table></div></div>
   </section>
 
   <section id="tab-candidates" class="tabpage hidden">
+    <div class="card"><h2>S0 问卷星累计表导入</h2><div class="muted" style="margin-bottom:10px">继续使用人工下载的问卷星 CSV/XLSX。重复导入同一文件不会产生重复候选；新累计表会按序号、手机号、微信安全合并，并保留已赋 ID 的历史候选。</div><div class="row"><input id="s0File" type="file" accept=".csv,.xlsx"><button class="btn primary" id="importS0Btn">导入 S0 累计表</button><span id="s0Result" class="muted"></span></div></div>
     <div class="card"><h2>新增候选</h2><div class="form-grid"><input id="cName" placeholder="姓名/称呼"><input id="cPhone" placeholder="手机号"><input id="cWechat" placeholder="微信"><input id="cSource" placeholder="来源渠道"><input id="cSex" placeholder="性别"><input id="cAge" placeholder="年龄段"><input id="cIdentity" placeholder="日程身份类型"><select id="cOs"><option value="">手机系统</option><option>Android</option><option>iOS</option></select><input id="cWork" placeholder="工作/学习区"><input id="cHome" placeholder="居住区"><input id="cAvail" class="wide" placeholder="可参与时间"><input id="cNotes" class="wide" placeholder="备注"></div><div class="form-actions"><button class="btn primary" id="addCandidateBtn">加入候选池</button></div></div>
     <div class="card"><h2>候选池</h2><div class="table-wrap"><table><thead><tr><th>姓名</th><th>联系方式</th><th>来源</th><th>特征</th><th>地区</th><th>手机</th><th>关联ID</th><th>操作</th></tr></thead><tbody id="candidateRows"></tbody></table></div></div>
+  </section>
+
+  <section id="tab-qc" class="tabpage hidden">
+    <div class="card"><div class="row" style="justify-content:space-between"><div><h2>每日采集完整度</h2><div class="muted">沿用旧版“暴露日 d = 当晚问卷 + 当日 Lighting + 当日 GPS + d+1 晨间问卷”。今天保持待完成，不提前报缺失。</div></div><button class="btn primary" id="runQcBtn">运行核查并同步异常</button></div><div class="grid metrics" id="qcMetrics" style="margin-top:14px"></div><div class="table-wrap"><table><thead><tr><th>日期</th><th>ID</th><th>Day</th><th>状态</th><th>晚问卷</th><th>Lighting</th><th>GPS</th><th>次晨问卷</th><th>缺失/异常</th></tr></thead><tbody id="qcRows"></tbody></table></div></div>
+    <div class="card"><h2>最近 Lighting 上传</h2><div class="table-wrap"><table><thead><tr><th>日期</th><th>ID</th><th>文件</th><th>质量</th><th>有效/总记录</th><th>有效率</th><th>上传时间</th><th>解析信息</th></tr></thead><tbody id="lightingRows"></tbody></table></div></div>
   </section>
 
   <section id="tab-devices" class="tabpage hidden">
@@ -82,7 +89,7 @@
         <div class="form-grid"><input id="uUsername" placeholder="用户名，如 ra01"><input id="uDisplay" placeholder="显示名称"><select id="uRole"><option value="ra">RA</option><option value="pi">PI</option></select><input id="uPassword" type="password" placeholder="密码（留空自动生成）"></div>
         <div class="form-actions"><button class="btn primary" id="addUserBtn">新增协作者</button></div>
       </div>
-      <div class="card"><h2>系统状态备份</h2><div class="callout"><strong>一键下载一致性快照</strong><span class="muted">包含账号、候选/被试、设备、异常、GPS 与问卷数据库状态；不包含当前登录 session 和 raw/gps JSONL 镜像。</span></div><div class="form-actions"><button class="btn primary" id="backupBtn">下载系统状态备份</button></div></div>
+      <div class="card"><h2>系统状态备份</h2><div class="callout"><strong>一键下载一致性快照</strong><span class="muted">包含账号、S0/候选、被试、设备、异常、GPS、问卷与 Lighting QC 元数据；不包含当前登录 session、raw GPS JSONL 和 raw Lighting 大文件。</span></div><div class="form-actions"><button class="btn primary" id="backupBtn">下载系统状态备份</button></div></div>
     </div>
     <div class="card"><h2>当前账号</h2><div class="table-wrap"><table><thead><tr><th>用户名</th><th>显示名称</th><th>角色</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="userRows"></tbody></table></div></div>
   </section>

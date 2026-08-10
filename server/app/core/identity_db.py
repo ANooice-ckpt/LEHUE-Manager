@@ -44,8 +44,25 @@ CREATE TABLE IF NOT EXISTS candidates (
     pickup_method TEXT NOT NULL DEFAULT '',
     availability TEXT NOT NULL DEFAULT '',
     notes TEXT NOT NULL DEFAULT '',
+    source_seq TEXT NOT NULL DEFAULT '',
+    in_latest_snapshot INTEGER NOT NULL DEFAULT 1,
+    s0_import_uid TEXT NOT NULL DEFAULT '',
+    s0_raw_json TEXT NOT NULL DEFAULT '{}',
     created_at_utc TEXT NOT NULL,
     updated_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS s0_imports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    import_uid TEXT NOT NULL UNIQUE,
+    filename TEXT NOT NULL,
+    sha256 TEXT NOT NULL UNIQUE,
+    file_bytes BLOB NOT NULL,
+    row_count INTEGER NOT NULL,
+    imported_count INTEGER NOT NULL,
+    filtered_count INTEGER NOT NULL,
+    imported_at_utc TEXT NOT NULL,
+    imported_by TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS contact_logs (
@@ -60,6 +77,13 @@ CREATE TABLE IF NOT EXISTS contact_logs (
     FOREIGN KEY(candidate_uid) REFERENCES candidates(candidate_uid) ON DELETE SET NULL
 );
 """
+
+CANDIDATE_COLUMNS = {
+    "source_seq": "TEXT NOT NULL DEFAULT ''",
+    "in_latest_snapshot": "INTEGER NOT NULL DEFAULT 1",
+    "s0_import_uid": "TEXT NOT NULL DEFAULT ''",
+    "s0_raw_json": "TEXT NOT NULL DEFAULT '{}'",
+}
 
 
 def connect_identity() -> sqlite3.Connection:
@@ -86,6 +110,13 @@ def identity_db():
 
 
 def init_identity_db() -> None:
-    with connect_identity() as conn:
+    conn = connect_identity()
+    try:
         conn.executescript(IDENTITY_SCHEMA)
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(candidates)")}
+        for name, declaration in CANDIDATE_COLUMNS.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE candidates ADD COLUMN {name} {declaration}")
         conn.commit()
+    finally:
+        conn.close()

@@ -48,6 +48,9 @@ def _int(name: str, default: int) -> int:
     return int(raw)
 
 
+_DATA_DIR = Path(os.getenv("DATA_DIR", "./data"))
+
+
 @dataclass(frozen=True)
 class Settings:
     project_name: str = os.getenv("PROJECT_NAME", "LEHUE")
@@ -55,10 +58,12 @@ class Settings:
     app_version: str = APP_VERSION
     study_timezone: str = os.getenv("STUDY_TIMEZONE", "Asia/Shanghai")
     admin_token: str = os.getenv("ADMIN_TOKEN", "CHANGE_ME_TO_A_LONG_RANDOM_ADMIN_TOKEN")
-    data_dir: Path = Path(os.getenv("DATA_DIR", "./data"))
-    db_path: Path = Path(os.getenv("DB_PATH", "./data/lehue.sqlite3"))
-    identity_db_path: Path = Path(os.getenv("IDENTITY_DB_PATH", "./data/lehue_identity.sqlite3"))
-    raw_archive_dir: Path = Path(os.getenv("RAW_ARCHIVE_DIR", "./data/raw/gps"))
+    data_dir: Path = _DATA_DIR
+    db_path: Path = Path(os.getenv("DB_PATH", str(_DATA_DIR / "lehue.sqlite3")))
+    identity_db_path: Path = Path(os.getenv("IDENTITY_DB_PATH", str(_DATA_DIR / "lehue_identity.sqlite3")))
+    raw_archive_dir: Path = Path(os.getenv("RAW_ARCHIVE_DIR", str(_DATA_DIR / "raw" / "gps")))
+    raw_light_dir: Path = Path(os.getenv("RAW_LIGHT_DIR", str(_DATA_DIR / "raw" / "lighting")))
+    light_upload_max_bytes: int = _int("LIGHT_UPLOAD_MAX_BYTES", 25 * 1024 * 1024)
     enable_docs: bool = _bool("ENABLE_DOCS", True)
     qc_gap_warning_seconds: int = _int("QC_GAP_WARNING_SECONDS", 300)
     qc_delay_warning_seconds: int = _int("QC_DELAY_WARNING_SECONDS", 120)

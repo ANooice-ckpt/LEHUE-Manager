@@ -1,20 +1,40 @@
+# Environment-specific secrets. Commit templates only.
 .env
+.env.*
+!.env.example
+!.env.*.example
+
+# Python environments, caches and coverage output.
 .venv/
 server/.venv/
-__pycache__/
-*.pyc
+**/__pycache__/
+*.py[cod]
 .pytest_cache/
-server/data/*
-!server/data/.gitkeep
-!server/data/raw/
-server/data/raw/*
-!server/data/raw/gps/
-server/data/raw/gps/*
-!server/data/raw/gps/.gitkeep
+.coverage
+htmlcov/
+
+# Mutable runtime data. Keep only empty directory markers in Git.
+/data/
+/server/data/**
+!/server/data/.gitkeep
+!/server/data/raw/
+!/server/data/raw/gps/
+!/server/data/raw/gps/.gitkeep
+!/server/data/raw/lighting/
+!/server/data/raw/lighting/.gitkeep
+
+# Backups and local working output.
+/backups/
+/server/backups/
+/tmp/
+LEHUE_system_backup_*.zip
+lehue_backup_*/
 *.db
 *.sqlite
 *.sqlite3
 *.log
+
+# Editor and OS metadata.
 .DS_Store
 .vscode/
 .idea/
