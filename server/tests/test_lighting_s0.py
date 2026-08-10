@@ -46,7 +46,7 @@ def test_lighting_upload_and_daily_qc(monkeypatch):
                 "INSERT INTO study_subjects(participant_id,status,start_date,end_date,created_at_utc,updated_at_utc) VALUES(?,?,?,?,?,?)",
                 ("001", "running", yesterday.isoformat(), (today + timedelta(days=12)).isoformat(), now, now),
             )
-            conn.execute("INSERT INTO participants VALUES(?,?,?,?,?)", ("001", "salt", "hash", 1, now))
+            conn.execute("INSERT INTO participants(participant_id,secret_salt,secret_hash,is_active,created_at_utc) VALUES(?,?,?,?,?)", ("001", "salt", "hash", 1, now))
             conn.execute(
                 "INSERT INTO raw_events(participant_id,event_uid,message_type,recorded_at_utc,received_at_utc,raw_json,archive_ok) VALUES(?,?,?,?,?,?,1)",
                 ("001", "event-1", "location", f"{yesterday.isoformat()}T04:00:00Z", now, "{}"),
@@ -121,4 +121,3 @@ def test_s0_snapshot_import_preserves_candidate_identity(monkeypatch):
             assert rows[0]["name"] == "人工校正姓名"
             assert rows[0]["notes"] == "已联系"
             assert conn.execute("SELECT COUNT(*) n FROM s0_imports").fetchone()["n"] == 2
-

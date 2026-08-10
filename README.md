@@ -1,4 +1,4 @@
-# LEHUE-Manager v0.5.3
+# LEHUE-Manager v0.5.4
 
 **LEHUE = Light Exposure Histories in Urban Environments**
 
@@ -42,6 +42,7 @@ LEHUE-Manager/
 
 - 保留 v0.3.1 的 Web Admin、PI/RA 登录、非公开账号初始化、系统状态备份。
 - 每个正式被试可在 Admin 中生成一个不可猜测的专属工作入口；重置入口后旧链接立即失效。
+- GPS 密码和工作入口可在被试列表中随时查看、复制或重置；服务器保留 hash 认证并额外保存加密副本。
 - 被试打开专属链接后无需填写姓名或被试号，服务器自动绑定 participant、研究日期与 Study Day。
 - Participant Portal 参考原 ANOLighting 的移动端单卡片/任务列表结构，接入正式晨间/睡前问卷、Lighting 上传和 GPS 回传状态。
 - 问卷不再依赖问卷星/每日 CSV 下载；答案直接写入 `lehue.sqlite3` 的 `questionnaire_responses`。

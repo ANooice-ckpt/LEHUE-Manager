@@ -74,10 +74,25 @@ def test_web_admin_flow(monkeypatch):
             assert client.post(f'/api/v1/web/candidates/{cuid}/promote', json={'participant_id':'001','expected_start':'2026-09-01','expected_end':'2026-09-14','pack_id':'D01','assigned_ra':'ra01'}, headers=h).status_code == 200
             r = client.post('/api/v1/web/subjects/001/gps-credential', json={}, headers=h)
             assert r.status_code == 200 and r.json()['password']
+            gps_password = r.json()['password']
             # Participant portal can be generated before study start; no ID is embedded in the path.
             portal = client.post('/api/v1/web/subjects/001/portal', json={}, headers=h)
             assert portal.status_code == 200 and portal.json()['path'].startswith('/p/')
             assert '/001' not in portal.json()['path']
+            credentials = client.get('/api/v1/web/subjects/001/credentials').json()
+            assert credentials['gps_password'] == gps_password
+            assert credentials['portal_path'] == portal.json()['path']
+            assert credentials['gps_exists'] is True
+            assert credentials['portal_exists'] is True
+            rotated_gps = client.post('/api/v1/web/subjects/001/gps-credential', json={}, headers=h).json()['password']
+            rotated_portal = client.post('/api/v1/web/subjects/001/portal', json={}, headers=h).json()['path']
+            assert rotated_gps != gps_password
+            assert rotated_portal != portal.json()['path']
+            credentials2 = client.get('/api/v1/web/subjects/001/credentials').json()
+            assert credentials2['gps_password'] == rotated_gps
+            assert credentials2['portal_path'] == rotated_portal
+            old_token = portal.json()['path'].removeprefix('/p/')
+            assert client.get(f'/api/v1/portal/{old_token}').status_code == 404
             assert client.post('/api/v1/web/subjects/001/start', json={'pack_id':'D01','start_date':'2026-09-01','end_date':'2026-09-14'}, headers=h).status_code == 200
             light = client.post(
                 '/api/v1/web/lighting/upload?participant_id=001&date_local=2026-09-01&filename=001_20260901_LIGHT.csv',

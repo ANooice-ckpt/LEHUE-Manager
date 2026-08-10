@@ -83,6 +83,7 @@ nano .env
 ```text
 DOMAIN=gps.example.com
 ADMIN_TOKEN=随机长token
+CREDENTIAL_ENCRYPTION_KEY=随机Fernet密钥
 ENABLE_DOCS=true
 ```
 
@@ -90,12 +91,13 @@ ENABLE_DOCS=true
 
 ```bash
 python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
+python3 -c 'import secrets,base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())'
 ```
 
 ## H. 启动容器
 
 ```bash
-docker compose up -d --build
+./scripts/server_start.sh test
 docker compose ps
 ```
 

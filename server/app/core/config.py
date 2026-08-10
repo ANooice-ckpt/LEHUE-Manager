@@ -79,6 +79,7 @@ class Settings:
     runtime_env: str = _RUNTIME_ENV
     study_timezone: str = os.getenv("STUDY_TIMEZONE", "Asia/Shanghai")
     admin_token: str = os.getenv("ADMIN_TOKEN", "CHANGE_ME_TO_A_LONG_RANDOM_ADMIN_TOKEN")
+    credential_encryption_key: str = os.getenv("CREDENTIAL_ENCRYPTION_KEY", "")
     data_root: Path = _DATA_ROOT
     data_dir: Path = _DATA_DIR
     db_path: Path = _DATA_DIR / "lehue.sqlite3"

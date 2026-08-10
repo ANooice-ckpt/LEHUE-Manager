@@ -12,9 +12,10 @@ https://你的域名/p/<随机 token>
 
 - URL 不包含三位数 participant ID。
 - token 由 selector + secret 组成；服务器先按 selector 定位，再校验 secret hash。
-- secret 明文只在生成时返回一次，数据库只保存 salted hash。
+- v0.5.4 起，服务器继续使用 salted hash 验证，同时保存由服务器环境密钥加密的 token 副本，PI/RA 可在管理端随时查看和复制。
 - “重置工作入口”会生成新 token，旧链接立即失效。
 - 链接本身等价于被试端身份凭据，请勿公开或转发。
+- 升级前生成的旧入口没有可恢复副本，需要在管理端重置一次。
 
 ## 2. 被试看到什么
 

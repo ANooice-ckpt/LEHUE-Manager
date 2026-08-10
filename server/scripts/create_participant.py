@@ -8,7 +8,7 @@ import argparse
 from datetime import datetime, timezone
 
 from app.core.db import db, init_db
-from app.core.security import generate_secret, hash_secret
+from app.core.security import encrypt_credential, generate_secret, hash_secret
 
 
 def main():
@@ -28,9 +28,9 @@ def main():
         if exists:
             raise SystemExit(f"Participant already exists: {participant_id}")
         conn.execute(
-            "INSERT INTO participants(participant_id,secret_salt,secret_hash,is_active,created_at_utc) VALUES(?,?,?,?,?)",
+            "INSERT INTO participants(participant_id,secret_salt,secret_hash,secret_ciphertext,is_active,created_at_utc) VALUES(?,?,?,?,?,?)",
             (
-                participant_id, salt, digest, 1,
+                participant_id, salt, digest, encrypt_credential(secret), 1,
                 datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             ),
         )
@@ -38,7 +38,7 @@ def main():
     print("Participant created")
     print(f"participant_id = {participant_id}")
     print(f"password       = {secret}")
-    print("Save this password now. Only its hash is stored in the database.")
+    print("The password can be recovered by the server with its credential encryption key.")
 
 
 if __name__ == "__main__":

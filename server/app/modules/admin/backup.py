@@ -67,7 +67,7 @@ def create_system_backup() -> tuple[str, str]:
         "generated_at_utc": generated,
         "study_timezone": settings.study_timezone,
         "contents": ["lehue.sqlite3", "lehue_identity.sqlite3"],
-        "excluded": ["web_sessions", "server/data/raw/gps JSONL mirror", "server/data/raw/lighting files"],
+        "excluded": ["web_sessions", "credential encryption key (.env)", "server/data/raw/gps JSONL mirror", "server/data/raw/lighting files"],
         "counts": counts,
         "sha256": {"lehue.sqlite3": _sha256(main_copy), "lehue_identity.sqlite3": _sha256(identity_copy)},
         "note": "Sensitive backup: contains identity/contact data, GPS records and questionnaire responses. Store securely.",

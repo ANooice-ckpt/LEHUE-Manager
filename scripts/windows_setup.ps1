@@ -48,20 +48,27 @@ Write-Host "[2/5] Installing runtime + development/test dependencies..."
 Invoke-NativeChecked $Python -m pip install --no-cache-dir --disable-pip-version-check -r $DevRequirements
 
 Write-Host "[3/5] Verifying required Python modules..."
-Invoke-NativeChecked $Python -c "from zoneinfo import ZoneInfo; import fastapi, uvicorn, httpx, pytest, tzdata; ZoneInfo('Asia/Shanghai'); print('fastapi', fastapi.__version__); print('uvicorn', uvicorn.__version__); print('httpx', httpx.__version__); print('pytest', pytest.__version__)"
+Invoke-NativeChecked $Python -c "from zoneinfo import ZoneInfo; import fastapi, uvicorn, httpx, pytest, tzdata, cryptography; ZoneInfo('Asia/Shanghai'); print('fastapi', fastapi.__version__); print('uvicorn', uvicorn.__version__); print('httpx', httpx.__version__); print('pytest', pytest.__version__); print('cryptography', cryptography.__version__)"
 
 if (-not (Test-Path $EnvFile)) {
     Write-Host "[4/5] Creating .env with a random admin token..."
     Copy-Item $EnvExample $EnvFile
     $Token = (& $Python -c "import secrets; print(secrets.token_urlsafe(48))").Trim()
+    $CredentialKey = (& $Python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())").Trim()
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($Token)) {
         throw "Failed to generate ADMIN_TOKEN."
     }
     $Content = Get-Content $EnvFile -Raw
     $Content = $Content.Replace("CHANGE_ME_TO_A_LONG_RANDOM_ADMIN_TOKEN", $Token)
+    $Content = $Content.Replace("CHANGE_ME_TO_A_FERNET_KEY", $CredentialKey)
     Set-Content -Path $EnvFile -Value $Content -Encoding UTF8
 } else {
-    Write-Host "[4/5] .env already exists; leaving it unchanged."
+    Write-Host "[4/5] .env already exists; checking credential encryption key."
+    $Content = Get-Content $EnvFile -Raw
+    if ($Content -notmatch '(?m)^CREDENTIAL_ENCRYPTION_KEY=') {
+        $CredentialKey = (& $Python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())").Trim()
+        Add-Content -Path $EnvFile -Value "`nCREDENTIAL_ENCRYPTION_KEY=$CredentialKey" -Encoding UTF8
+    }
 }
 
 Write-Host "[5/5] Running automated tests..."

@@ -77,7 +77,7 @@ LEHUE local setup is ready.
 .\scripts\windows_create_test_participant.ps1 TEST01
 ```
 
-保存终端只显示一次的 password。
+password 会在终端显示，也会以加密副本保存在 TEST 数据库中；正式被试可从 Web Admin 的“查看凭据”复制。
 
 ## 5. 本地 smoke test
 

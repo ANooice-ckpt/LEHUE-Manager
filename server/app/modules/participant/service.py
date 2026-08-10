@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 from app.core.config import settings
 from app.core.db import db
-from app.core.security import hash_secret, verify_secret
+from app.core.security import encrypt_credential, hash_secret, verify_secret
 from app.modules.light import service as light_service
 from app.modules.questionnaire import FORM_VERSION, get_form, list_forms, validate_answers
 
@@ -30,8 +30,8 @@ def generate_portal_token(participant_id: str) -> str:
         if not conn.execute("SELECT 1 FROM study_subjects WHERE participant_id=?", (participant_id,)).fetchone():
             raise ValueError("participant not found")
         conn.execute(
-            "UPDATE study_subjects SET portal_token_id=?,portal_token_salt=?,portal_token_hash=?,portal_token_created_at_utc=?,updated_at_utc=? WHERE participant_id=?",
-            (selector, salt, digest, now, now, participant_id),
+            "UPDATE study_subjects SET portal_token_id=?,portal_token_salt=?,portal_token_hash=?,portal_token_ciphertext=?,portal_token_created_at_utc=?,updated_at_utc=? WHERE participant_id=?",
+            (selector, salt, digest, encrypt_credential(f"{selector}.{secret}"), now, now, participant_id),
         )
     return f"{selector}.{secret}"
 

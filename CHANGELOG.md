@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.4 - 2026-08-11
+
+- Added a unified participant credential dialog for viewing and copying the OwnTracks endpoint, username/password and participant portal link at any time.
+- Kept the existing salted hashes for authentication and added Fernet-encrypted recoverable copies in the same two existing tables; no new table was introduced.
+- Added one-click GPS password and portal-link rotation. Credentials created before v0.5.4 require one reset before they become recoverable.
+- Added automatic SQLite column migration, audit events for credential viewing/rotation and local encryption-key setup.
+
 ## 0.5.3 - 2026-08-10
 
 - Added a Git-versioned, synthetic-only `server/test_seed` baseline while keeping mutable `data/test` and all `data/prod` state ignored.

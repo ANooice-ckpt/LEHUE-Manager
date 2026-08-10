@@ -36,7 +36,7 @@ def test_end_to_end(monkeypatch):
         salt, digest = sec.hash_secret("pw")
         with dbmod.db() as conn:
             conn.execute(
-                "INSERT INTO participants VALUES(?,?,?,?,?)",
+                "INSERT INTO participants(participant_id,secret_salt,secret_hash,is_active,created_at_utc) VALUES(?,?,?,?,?)",
                 ("TEST01", salt, digest, 1, "2026-01-01T00:00:00Z"),
             )
 

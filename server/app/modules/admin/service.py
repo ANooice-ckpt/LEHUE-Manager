@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 from app.core.config import settings
 from app.core.db import db
 from app.core.identity_db import identity_db
-from app.core.security import generate_secret, hash_secret
+from app.core.security import decrypt_credential, encrypt_credential, generate_secret, hash_secret
 from app.modules.participant import service as participant_service
 from app.modules.questionnaire import s0_import
 from app.modules.light import service as light_service
@@ -66,7 +66,7 @@ def dashboard() -> dict[str, Any]:
             s["gps_last_received_at_utc"] = conn.execute("SELECT MAX(received_at_utc) x FROM gps_locations WHERE participant_id=?", (s["participant_id"],)).fetchone()["x"]
             s["questionnaire_today_completed"] = counts.get(s["participant_id"], 0)
             s["portal_enabled"] = bool(s.get("portal_token_id"))
-            for secret_field in ("portal_token_id", "portal_token_salt", "portal_token_hash", "portal_token_created_at_utc"):
+            for secret_field in ("portal_token_id", "portal_token_salt", "portal_token_hash", "portal_token_ciphertext", "portal_token_created_at_utc"):
                 s.pop(secret_field, None)
     return {
         "metrics": {
@@ -132,7 +132,7 @@ def list_subjects():
             row["questionnaire_today_completed"] = counts.get(row["participant_id"], 0)
             row["lighting_today"] = light_service.portal_light_state(row["participant_id"], today)
             row["portal_enabled"] = bool(row.get("portal_token_id"))
-            for secret_field in ("portal_token_id", "portal_token_salt", "portal_token_hash", "portal_token_created_at_utc"):
+            for secret_field in ("portal_token_id", "portal_token_salt", "portal_token_hash", "portal_token_ciphertext", "portal_token_created_at_utc"):
                 row.pop(secret_field, None)
     with identity_db() as conn:
         names = {r["linked_participant_id"]: {"name":r["name"],"phone":r["phone"],"wechat":r["wechat"]} for r in conn.execute("SELECT linked_participant_id,name,phone,wechat FROM candidates WHERE linked_participant_id IS NOT NULL")}
@@ -164,15 +164,19 @@ def promote_candidate(candidate_uid: str, data: dict[str, Any], operator: str):
     return sid
 
 
-def ensure_gps_credential(participant_id: str, operator: str) -> str:
+def create_or_rotate_gps_credential(participant_id: str, operator: str) -> str:
     with db() as conn:
-        row = conn.execute("SELECT 1 FROM participants WHERE participant_id=?", (participant_id,)).fetchone()
-        if row:
-            raise ValueError("GPS credential already exists; password cannot be recovered. Rotate explicitly later if needed.")
+        if not conn.execute("SELECT 1 FROM study_subjects WHERE participant_id=?", (participant_id,)).fetchone():
+            raise ValueError("participant not found")
         secret = generate_secret()
         salt, digest = hash_secret(secret)
-        conn.execute("INSERT INTO participants(participant_id,secret_salt,secret_hash,is_active,created_at_utc) VALUES(?,?,?,?,?)", (participant_id,salt,digest,1,now_iso()))
-    audit(operator, "gps.credential.create", "participant", participant_id)
+        ciphertext = encrypt_credential(secret)
+        conn.execute(
+            "INSERT INTO participants(participant_id,secret_salt,secret_hash,secret_ciphertext,is_active,created_at_utc) VALUES(?,?,?,?,?,?) "
+            "ON CONFLICT(participant_id) DO UPDATE SET secret_salt=excluded.secret_salt,secret_hash=excluded.secret_hash,secret_ciphertext=excluded.secret_ciphertext,is_active=1",
+            (participant_id, salt, digest, ciphertext, 1, now_iso()),
+        )
+    audit(operator, "gps.credential.rotate", "participant", participant_id)
     return secret
 
 
@@ -180,6 +184,30 @@ def create_portal_link(participant_id: str, operator: str) -> str:
     token = participant_service.generate_portal_token(participant_id)
     audit(operator, "participant.portal.rotate", "participant", participant_id)
     return f"/p/{token}"
+
+
+def reveal_credentials(participant_id: str, operator: str) -> dict:
+    with db() as conn:
+        subject = conn.execute(
+            "SELECT portal_token_id,portal_token_ciphertext FROM study_subjects WHERE participant_id=?",
+            (participant_id,),
+        ).fetchone()
+        if not subject:
+            raise ValueError("participant not found")
+        gps = conn.execute(
+            "SELECT secret_ciphertext FROM participants WHERE participant_id=?",
+            (participant_id,),
+        ).fetchone()
+    gps_password = decrypt_credential(gps["secret_ciphertext"]) if gps and gps["secret_ciphertext"] else ""
+    portal_token = decrypt_credential(subject["portal_token_ciphertext"]) if subject["portal_token_ciphertext"] else ""
+    audit(operator, "participant.credentials.view", "participant", participant_id)
+    return {
+        "participant_id": participant_id,
+        "gps_exists": gps is not None,
+        "gps_password": gps_password,
+        "portal_exists": bool(subject["portal_token_id"]),
+        "portal_path": f"/p/{portal_token}" if portal_token else "",
+    }
 
 
 def list_devices():

@@ -6,3 +6,4 @@ os.environ.setdefault("LEHUE_ENV", "test")
 # Unit/integration tests build their own temporary databases and must never load
 # the repository's shared manual-testing baseline.
 os.environ.setdefault("LOAD_TEST_SEED", "false")
+os.environ.setdefault("CREDENTIAL_ENCRYPTION_KEY", "ZdyEYzKQLDxlp2rEYvqGGSUSr-Yq1nDwNZCWx4RTTHQ=")

@@ -210,7 +210,7 @@ def subjects(operator=Depends(require_operator)):
 @router.post("/api/v1/web/subjects/{participant_id}/gps-credential")
 def gps_credential(participant_id: str, operator=Depends(require_operator_write)):
     try:
-        return {"participant_id":participant_id,"password":service.ensure_gps_credential(participant_id, operator.username)}
+        return {"participant_id":participant_id,"password":service.create_or_rotate_gps_credential(participant_id, operator.username)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -259,6 +259,14 @@ def lighting_uploads(participant_id: str = "", date_local: str = "", operator=De
 async def lighting_upload(participant_id: str, date_local: str, filename: str, request: Request, operator=Depends(require_operator_write)):
     try:
         return service.upload_lighting(participant_id, date_local, filename, await request.body(), operator.username)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/api/v1/web/subjects/{participant_id}/credentials")
+def participant_credentials(participant_id: str, operator=Depends(require_operator)):
+    try:
+        return service.reveal_credentials(participant_id, operator.username)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

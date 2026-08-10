@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS participants (
     participant_id TEXT PRIMARY KEY,
     secret_salt TEXT NOT NULL,
     secret_hash TEXT NOT NULL,
+    secret_ciphertext TEXT NOT NULL DEFAULT '',
     is_active INTEGER NOT NULL DEFAULT 1,
     created_at_utc TEXT NOT NULL
 );
@@ -86,6 +87,7 @@ CREATE TABLE IF NOT EXISTS study_subjects (
     portal_token_id TEXT NOT NULL DEFAULT '',
     portal_token_salt TEXT NOT NULL DEFAULT '',
     portal_token_hash TEXT NOT NULL DEFAULT '',
+    portal_token_ciphertext TEXT NOT NULL DEFAULT '',
     portal_token_created_at_utc TEXT NOT NULL DEFAULT '',
     created_at_utc TEXT NOT NULL,
     updated_at_utc TEXT NOT NULL
@@ -185,7 +187,12 @@ PORTAL_COLUMNS = {
     "portal_token_id": "TEXT NOT NULL DEFAULT ''",
     "portal_token_salt": "TEXT NOT NULL DEFAULT ''",
     "portal_token_hash": "TEXT NOT NULL DEFAULT ''",
+    "portal_token_ciphertext": "TEXT NOT NULL DEFAULT ''",
     "portal_token_created_at_utc": "TEXT NOT NULL DEFAULT ''",
+}
+
+PARTICIPANT_COLUMNS = {
+    "secret_ciphertext": "TEXT NOT NULL DEFAULT ''",
 }
 
 SUBJECT_COLUMNS = {
@@ -229,6 +236,13 @@ def _ensure_subject_columns(conn: sqlite3.Connection) -> None:
     )
 
 
+def _ensure_participant_columns(conn: sqlite3.Connection) -> None:
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(participants)")}
+    for name, declaration in PARTICIPANT_COLUMNS.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE participants ADD COLUMN {name} {declaration}")
+
+
 def init_db() -> None:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     settings.raw_archive_dir.mkdir(parents=True, exist_ok=True)
@@ -236,6 +250,7 @@ def init_db() -> None:
     conn = connect()
     try:
         conn.executescript(SCHEMA)
+        _ensure_participant_columns(conn)
         _ensure_subject_columns(conn)
         conn.commit()
     finally:
