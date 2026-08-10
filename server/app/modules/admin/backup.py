@@ -22,7 +22,6 @@ def _sha256(path: Path) -> str:
 
 
 def create_system_backup() -> tuple[str, str]:
-    """Create a consistent downloadable snapshot of LEHUE's two SQLite DBs."""
     temp_dir = Path(tempfile.mkdtemp(prefix="lehue_backup_"))
     main_copy = temp_dir / "lehue.sqlite3"
     identity_copy = temp_dir / "lehue_identity.sqlite3"
@@ -30,8 +29,7 @@ def create_system_backup() -> tuple[str, str]:
     with connect() as src:
         dst = sqlite3.connect(main_copy)
         try:
-            src.backup(dst)
-            dst.commit()
+            src.backup(dst); dst.commit()
         finally:
             dst.close()
 
@@ -39,7 +37,6 @@ def create_system_backup() -> tuple[str, str]:
         dst = sqlite3.connect(identity_copy)
         try:
             src.backup(dst)
-            # Backups preserve accounts but intentionally invalidate browser sessions.
             dst.execute("DELETE FROM web_sessions")
             dst.commit()
         finally:
@@ -51,6 +48,7 @@ def create_system_backup() -> tuple[str, str]:
             "device_packs": conn.execute("SELECT COUNT(*) n FROM device_packs").fetchone()["n"],
             "incidents": conn.execute("SELECT COUNT(*) n FROM incidents").fetchone()["n"],
             "gps_locations": conn.execute("SELECT COUNT(*) n FROM gps_locations").fetchone()["n"],
+            "questionnaire_responses": conn.execute("SELECT COUNT(*) n FROM questionnaire_responses").fetchone()["n"],
             "raw_events": conn.execute("SELECT COUNT(*) n FROM raw_events").fetchone()["n"],
         }
     with identity_db() as conn:
@@ -69,15 +67,11 @@ def create_system_backup() -> tuple[str, str]:
         "contents": ["lehue.sqlite3", "lehue_identity.sqlite3"],
         "excluded": ["web_sessions", "server/data/raw/gps JSONL mirror"],
         "counts": counts,
-        "sha256": {
-            "lehue.sqlite3": _sha256(main_copy),
-            "lehue_identity.sqlite3": _sha256(identity_copy),
-        },
-        "note": "Sensitive backup: contains identity/contact data and GPS records. Store securely.",
+        "sha256": {"lehue.sqlite3": _sha256(main_copy), "lehue_identity.sqlite3": _sha256(identity_copy)},
+        "note": "Sensitive backup: contains identity/contact data, GPS records and questionnaire responses. Store securely.",
     }
     manifest_path = temp_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
     zip_path = temp_dir / f"LEHUE_system_backup_{stamp}.zip"
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:

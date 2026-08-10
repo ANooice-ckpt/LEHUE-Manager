@@ -53,7 +53,7 @@
   </section>
 
   <section id="tab-subjects" class="tabpage hidden">
-    <div class="card"><h2>被试运行管理</h2><div class="muted" style="margin-bottom:10px">延续旧系统 scheduled → running → completed/canceled 状态逻辑；GPS 为当前首个实时数据源。</div><div class="table-wrap"><table><thead><tr><th>ID</th><th>姓名</th><th>状态</th><th>计划/实际日期</th><th>设备包</th><th>负责RA</th><th>GPS最近回传</th><th>操作</th></tr></thead><tbody id="subjectRows"></tbody></table></div></div>
+    <div class="card"><h2>被试运行管理</h2><div class="muted" style="margin-bottom:10px">每个正式被试可生成一个专属工作入口。入口链接本身就是被试身份凭据；重置入口会立即使旧链接失效。</div><div class="table-wrap"><table><thead><tr><th>ID</th><th>姓名</th><th>状态</th><th>计划/实际日期</th><th>设备包</th><th>负责RA</th><th>GPS最近回传</th><th>今日问卷</th><th>工作入口</th><th>操作</th></tr></thead><tbody id="subjectRows"></tbody></table></div></div>
   </section>
 
   <section id="tab-candidates" class="tabpage hidden">
@@ -67,7 +67,7 @@
   </section>
 
   <section id="tab-incidents" class="tabpage hidden">
-    <div class="card"><h2>新建异常</h2><div class="form-grid"><input id="iPid" placeholder="被试ID"><input id="iDate" type="date"><select id="iSource"><option>GPS</option><option>Lighting</option><option>Questionnaire</option><option>AX3</option><option>Device</option><option>Manual</option></select><select id="iSeverity"><option value="normal">普通</option><option value="high">重要</option></select><input id="iType" placeholder="异常类型"><input id="iSummary" class="wide" placeholder="异常摘要"><input id="iNotes" class="wide" placeholder="处理备注"></div><div class="form-actions"><button class="btn primary" id="addIncidentBtn">加入异常中心</button></div></div>
+    <div class="card"><h2>新建异常</h2><div class="form-grid"><input id="iPid" placeholder="被试ID"><input id="iDate" type="date"><select id="iSource"><option>GPS</option><option>Questionnaire</option><option>Lighting</option><option>AX3</option><option>Device</option><option>Manual</option></select><select id="iSeverity"><option value="normal">普通</option><option value="high">重要</option></select><input id="iType" placeholder="异常类型"><input id="iSummary" class="wide" placeholder="异常摘要"><input id="iNotes" class="wide" placeholder="处理备注"></div><div class="form-actions"><button class="btn primary" id="addIncidentBtn">加入异常中心</button></div></div>
     <div class="card"><h2>开放异常</h2><div id="incidentList"></div></div>
   </section>
 
@@ -79,19 +79,10 @@
       <div class="card">
         <h2>账号管理</h2>
         <div class="callout" style="margin-bottom:12px"><strong>非公开注册</strong><span class="muted">首个 PI 初始化后，所有新账号都必须由 PI 在这里创建。RA 无法创建账号或提升权限。</span></div>
-        <div class="form-grid">
-          <input id="uUsername" placeholder="用户名，如 ra01">
-          <input id="uDisplay" placeholder="显示名称">
-          <select id="uRole"><option value="ra">RA</option><option value="pi">PI</option></select>
-          <input id="uPassword" type="password" placeholder="密码（留空自动生成）">
-        </div>
+        <div class="form-grid"><input id="uUsername" placeholder="用户名，如 ra01"><input id="uDisplay" placeholder="显示名称"><select id="uRole"><option value="ra">RA</option><option value="pi">PI</option></select><input id="uPassword" type="password" placeholder="密码（留空自动生成）"></div>
         <div class="form-actions"><button class="btn primary" id="addUserBtn">新增协作者</button></div>
       </div>
-      <div class="card">
-        <h2>系统状态备份</h2>
-        <div class="callout"><strong>一键下载一致性快照</strong><span class="muted">包含账号、候选/被试、设备、异常、GPS 数据库等系统状态；不包含当前登录 session 和 raw/gps JSONL 镜像。备份包含敏感身份与轨迹数据，请放在受控位置。</span></div>
-        <div class="form-actions"><button class="btn primary" id="backupBtn">下载系统状态备份</button></div>
-      </div>
+      <div class="card"><h2>系统状态备份</h2><div class="callout"><strong>一键下载一致性快照</strong><span class="muted">包含账号、候选/被试、设备、异常、GPS 与问卷数据库状态；不包含当前登录 session 和 raw/gps JSONL 镜像。</span></div><div class="form-actions"><button class="btn primary" id="backupBtn">下载系统状态备份</button></div></div>
     </div>
     <div class="card"><h2>当前账号</h2><div class="table-wrap"><table><thead><tr><th>用户名</th><th>显示名称</th><th>角色</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="userRows"></tbody></table></div></div>
   </section>
@@ -101,7 +92,6 @@
 <dialog id="promoteDialog"><div class="dialog-body"><h2>赋 ID 并预约</h2><div class="dialog-grid"><label>正式三位数 ID<input id="pId" placeholder="006"></label><label>批次<input id="pBatch"></label><label>计划开始<input id="pStart" type="date"></label><label>计划结束<input id="pEnd" type="date"></label><label>设备包（可空）<input id="pPack"></label><label>负责 RA<input id="pRa"></label></div><div class="form-actions"><button class="btn" data-close="promoteDialog">取消</button><button class="btn primary" id="promoteSubmit">创建预约</button></div></div></dialog>
 <dialog id="startDialog"><div class="dialog-body"><h2>启动运行</h2><div class="dialog-grid"><label>设备包<input id="sPack"></label><label>正式开始<input id="sStart" type="date"></label><label>预期结束<input id="sEnd" type="date"></label></div><div class="form-actions"><button class="btn" data-close="startDialog">取消</button><button class="btn primary" id="startSubmit">启动</button></div></div></dialog>
 <div class="toast" id="toast"></div>
-
 <script src="/admin/app.js"></script>
 </body>
 </html>

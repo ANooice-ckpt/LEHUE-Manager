@@ -19,6 +19,8 @@ def _reload_stack(monkeypatch, td: str, domain: str = "localhost"):
     import app.core.security as sec; importlib.reload(sec)
     import app.core.web_security as ws; importlib.reload(ws)
     import app.modules.gps.service as gps; importlib.reload(gps)
+    import app.modules.participant.service as portal; importlib.reload(portal)
+    import app.modules.participant.router as portal_router; importlib.reload(portal_router)
     import app.modules.admin.service as svc; importlib.reload(svc)
     import app.modules.admin.router as admin_router; importlib.reload(admin_router)
     import app.modules.gps.router as gps_router; importlib.reload(gps_router)
@@ -37,21 +39,18 @@ def test_web_admin_flow(monkeypatch):
             assert setup.status_code == 200
             assert setup.json() == {"initialized": False, "setup_token_required": False}
 
-            # First account is created from the browser, without CLI on localhost.
             r = client.post('/api/v1/web/setup', json={
                 'username': 'pi', 'display_name': 'PI', 'password': 'strong-password-01'
             })
             assert r.status_code == 200
             csrf = r.json()['csrf_token']; h = {'X-CSRF-Token': csrf}
 
-            # The bootstrap endpoint permanently closes after the first account.
             r2 = client.post('/api/v1/web/setup', json={
                 'username': 'other', 'password': 'another-strong-password'
             })
             assert r2.status_code == 409
             assert client.get('/api/v1/web/setup-status').json()['initialized'] is True
 
-            # PI can create an RA from the Web Admin; blank password auto-generates one.
             r = client.post('/api/v1/web/users', json={
                 'username': 'ra01', 'display_name': 'RA 01', 'role': 'ra', 'password': ''
             }, headers=h)
@@ -60,13 +59,16 @@ def test_web_admin_flow(monkeypatch):
             users = client.get('/api/v1/web/users').json()
             assert {u['username'] for u in users} == {'pi', 'ra01'}
 
-            # Core V5-style operating flow still works.
             r = client.post('/api/v1/web/candidates', json={'name':'Test','phone':'123','phone_os':'iOS'}, headers=h)
             assert r.status_code == 200; cuid = r.json()['candidate_uid']
             assert client.post('/api/v1/web/devices', json={'pack_id':'D01','status':'available','light_serial':'L01','ax3_serial':'A01'}, headers=h).status_code == 200
             assert client.post(f'/api/v1/web/candidates/{cuid}/promote', json={'participant_id':'001','expected_start':'2026-09-01','expected_end':'2026-09-14','pack_id':'D01','assigned_ra':'ra01'}, headers=h).status_code == 200
             r = client.post('/api/v1/web/subjects/001/gps-credential', json={}, headers=h)
             assert r.status_code == 200 and r.json()['password']
+            # Participant portal can be generated before study start; no ID is embedded in the path.
+            portal = client.post('/api/v1/web/subjects/001/portal', json={}, headers=h)
+            assert portal.status_code == 200 and portal.json()['path'].startswith('/p/')
+            assert '/001' not in portal.json()['path']
             assert client.post('/api/v1/web/subjects/001/start', json={'pack_id':'D01','start_date':'2026-09-01','end_date':'2026-09-14'}, headers=h).status_code == 200
             assert client.post('/api/v1/web/incidents', json={'participant_id':'001','date_local':'2026-09-02','source':'GPS','incident_type':'offline','summary':'GPS offline'}, headers=h).status_code == 200
             d = client.get('/api/v1/web/dashboard').json()
@@ -75,13 +77,11 @@ def test_web_admin_flow(monkeypatch):
             assert client.get('/api/v1/web/architecture').status_code == 200
             assert client.get('/admin').status_code == 200
 
-            # Online SQLite backup is downloadable and intentionally drops sessions.
             backup = client.get('/api/v1/web/backup')
             assert backup.status_code == 200
             with zipfile.ZipFile(io.BytesIO(backup.content)) as zf:
                 assert {'lehue.sqlite3', 'lehue_identity.sqlite3', 'manifest.json'} <= set(zf.namelist())
 
-            # RA can log in, but cannot manage accounts or download sensitive backup.
             client.post('/api/v1/web/logout', json={}, headers=h)
             r = client.post('/api/v1/web/login', json={'username':'ra01','password':ra_password})
             assert r.status_code == 200

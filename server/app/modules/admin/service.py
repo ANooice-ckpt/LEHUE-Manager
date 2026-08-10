@@ -5,10 +5,13 @@ import re
 import secrets
 from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
+from app.core.config import settings
 from app.core.db import db
 from app.core.identity_db import identity_db
 from app.core.security import generate_secret, hash_secret
+from app.modules.participant import service as participant_service
 
 SUBJECT_RE = re.compile(r"^\d{3}$")
 PACK_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{1,15}$")
@@ -16,6 +19,10 @@ PACK_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{1,15}$")
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def local_today() -> str:
+    return datetime.now(ZoneInfo(settings.study_timezone)).date().isoformat()
 
 
 def audit(operator: str, action: str, entity_type: str = "", entity_id: str = "", detail: dict | None = None):
@@ -26,7 +33,19 @@ def audit(operator: str, action: str, entity_type: str = "", entity_id: str = ""
         )
 
 
+def _questionnaire_counts(conn, participant_ids: list[str], date_local: str) -> dict[str, int]:
+    if not participant_ids:
+        return {}
+    placeholders = ",".join("?" for _ in participant_ids)
+    rows = conn.execute(
+        f"SELECT participant_id,COUNT(*) n FROM questionnaire_responses WHERE date_local=? AND participant_id IN ({placeholders}) GROUP BY participant_id",
+        [date_local, *participant_ids],
+    ).fetchall()
+    return {r["participant_id"]: int(r["n"]) for r in rows}
+
+
 def dashboard() -> dict[str, Any]:
+    today = local_today()
     with identity_db() as conn:
         candidates = conn.execute("SELECT COUNT(*) n FROM candidates").fetchone()["n"]
     with db() as conn:
@@ -35,12 +54,16 @@ def dashboard() -> dict[str, Any]:
         open_incidents = conn.execute("SELECT COUNT(*) n FROM incidents WHERE status!='closed'").fetchone()["n"]
         available_packs = conn.execute("SELECT COUNT(*) n FROM device_packs WHERE status='available'").fetchone()["n"]
         gps_subjects = conn.execute("SELECT COUNT(DISTINCT participant_id) n FROM gps_locations").fetchone()["n"]
+        questionnaire_today = conn.execute("SELECT COUNT(*) n FROM questionnaire_responses WHERE date_local=?", (today,)).fetchone()["n"]
         recent_incidents = [dict(r) for r in conn.execute("SELECT * FROM incidents WHERE status!='closed' ORDER BY updated_at_utc DESC LIMIT 12")]
         running = [dict(r) for r in conn.execute("SELECT * FROM study_subjects WHERE status='running' ORDER BY start_date, participant_id LIMIT 30")]
-    for s in running:
-        with db() as conn:
-            last = conn.execute("SELECT MAX(received_at_utc) x FROM gps_locations WHERE participant_id=?", (s["participant_id"],)).fetchone()["x"]
-        s["gps_last_received_at_utc"] = last
+        counts = _questionnaire_counts(conn, [r["participant_id"] for r in running], today)
+        for s in running:
+            s["gps_last_received_at_utc"] = conn.execute("SELECT MAX(received_at_utc) x FROM gps_locations WHERE participant_id=?", (s["participant_id"],)).fetchone()["x"]
+            s["questionnaire_today_completed"] = counts.get(s["participant_id"], 0)
+            s["portal_enabled"] = bool(s.get("portal_token_id"))
+            for secret_field in ("portal_token_id", "portal_token_salt", "portal_token_hash", "portal_token_created_at_utc"):
+                s.pop(secret_field, None)
     return {
         "metrics": {
             "candidates": candidates,
@@ -49,6 +72,7 @@ def dashboard() -> dict[str, Any]:
             "open_incidents": open_incidents,
             "available_packs": available_packs,
             "gps_subjects": gps_subjects,
+            "questionnaire_today": questionnaire_today,
         },
         "running": running,
         "incidents": recent_incidents,
@@ -75,15 +99,20 @@ def add_candidate(data: dict[str, Any], operator: str):
 
 
 def list_subjects():
+    today = local_today()
     with db() as conn:
         rows = [dict(r) for r in conn.execute("SELECT * FROM study_subjects ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'scheduled' THEN 1 ELSE 2 END, participant_id")]
+        counts = _questionnaire_counts(conn, [r["participant_id"] for r in rows], today)
+        for row in rows:
+            row["gps_last_received_at_utc"] = conn.execute("SELECT MAX(received_at_utc) x FROM gps_locations WHERE participant_id=?", (row["participant_id"],)).fetchone()["x"]
+            row["questionnaire_today_completed"] = counts.get(row["participant_id"], 0)
+            row["portal_enabled"] = bool(row.get("portal_token_id"))
+            for secret_field in ("portal_token_id", "portal_token_salt", "portal_token_hash", "portal_token_created_at_utc"):
+                row.pop(secret_field, None)
     with identity_db() as conn:
         names = {r["linked_participant_id"]: {"name":r["name"],"phone":r["phone"],"wechat":r["wechat"]} for r in conn.execute("SELECT linked_participant_id,name,phone,wechat FROM candidates WHERE linked_participant_id IS NOT NULL")}
     for row in rows:
         row.update(names.get(row["participant_id"], {}))
-        with db() as conn:
-            last = conn.execute("SELECT MAX(received_at_utc) x FROM gps_locations WHERE participant_id=?", (row["participant_id"],)).fetchone()["x"]
-        row["gps_last_received_at_utc"] = last
     return rows
 
 
@@ -120,6 +149,12 @@ def ensure_gps_credential(participant_id: str, operator: str) -> str:
         conn.execute("INSERT INTO participants(participant_id,secret_salt,secret_hash,is_active,created_at_utc) VALUES(?,?,?,?,?)", (participant_id,salt,digest,1,now_iso()))
     audit(operator, "gps.credential.create", "participant", participant_id)
     return secret
+
+
+def create_portal_link(participant_id: str, operator: str) -> str:
+    token = participant_service.generate_portal_token(participant_id)
+    audit(operator, "participant.portal.rotate", "participant", participant_id)
+    return f"/p/{token}"
 
 
 def list_devices():
@@ -194,18 +229,18 @@ def update_incident_status(uid: str, status: str, operator: str):
 def architecture() -> dict[str, Any]:
     return {
         "layers": [
-            {"id":"participants","label":"Participants / RA / PI","kind":"people"},
-            {"id":"web","label":"LEHUE Web Admin","kind":"interface"},
+            {"id":"operators","label":"PI / RA Admin","kind":"people"},
+            {"id":"participants","label":"Participant Portal /p/<token>","kind":"people"},
             {"id":"api","label":"FastAPI backend","kind":"service"},
             {"id":"gps","label":"GPS / OwnTracks","kind":"source"},
+            {"id":"questionnaire","label":"LEHUE native questionnaire","kind":"source"},
             {"id":"light","label":"Lighting upload / OSS (reserved)","kind":"source"},
-            {"id":"questionnaire","label":"Wenjuanxing manual import (reserved)","kind":"source"},
             {"id":"ax3","label":"AX3 return + local import (reserved)","kind":"source"},
             {"id":"identity","label":"Identity DB","kind":"storage"},
-            {"id":"study","label":"Operations + GPS DB","kind":"storage"},
+            {"id":"study","label":"Operations + GPS + Questionnaire DB","kind":"storage"},
             {"id":"local","label":"Local scientific workstation","kind":"external"},
         ],
-        "principle":"Cloud handles study operations and acquisition state; scientific analysis stays local."
+        "principle":"Cloud handles study operations and native participant tasks; scientific analysis stays local."
     }
 
 
@@ -213,10 +248,12 @@ def data_sources() -> list[dict[str, Any]]:
     with db() as conn:
         gps_count = conn.execute("SELECT COUNT(*) n FROM gps_locations").fetchone()["n"]
         gps_last = conn.execute("SELECT MAX(received_at_utc) x FROM gps_locations").fetchone()["x"]
+        q_count = conn.execute("SELECT COUNT(*) n FROM questionnaire_responses").fetchone()["n"]
+        q_last = conn.execute("SELECT MAX(submitted_at_utc) x FROM questionnaire_responses").fetchone()["x"]
     return [
         {"key":"gps","name":"GPS","status":"connected","acquisition":"OwnTracks HTTP/HTTPS realtime","storage":"lehue.sqlite3 + raw JSONL","automation":"Realtime ingest + acquisition QC","last_event":gps_last,"records":gps_count},
+        {"key":"questionnaire","name":"Questionnaire","status":"connected","acquisition":"LEHUE participant portal /p/<token>","storage":"lehue.sqlite3 / questionnaire_responses","automation":"Identity + Study Day + submission status are automatic","last_event":q_last,"records":q_count},
         {"key":"light","name":"Lighting","status":"reserved","acquisition":"Participant manual upload","storage":"Future OSS raw objects + server metadata","automation":"Parser/QC adapter reserved","last_event":None,"records":None},
-        {"key":"questionnaire","name":"Questionnaire","status":"manual","acquisition":"Wenjuanxing download → import","storage":"Import adapter reserved","automation":"Manual download remains; parsing will be automated","last_event":None,"records":None},
         {"key":"ax3","name":"AX3","status":"offline","acquisition":"Device return → batch download","storage":"Local/raw archive; cloud status only","automation":"Post-return ingest reserved","last_event":None,"records":None},
         {"key":"identity","name":"Identity & contact","status":"connected","acquisition":"PI/RA Web Admin","storage":"lehue_identity.sqlite3","automation":"Separated from GPS/research records","last_event":None,"records":None},
     ]
