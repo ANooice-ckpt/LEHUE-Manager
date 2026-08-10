@@ -7,10 +7,8 @@ services:
     env_file:
       - .env
     environment:
-      DATA_DIR: /app/data
-      DB_PATH: /app/data/lehue.sqlite3
-      IDENTITY_DB_PATH: /app/data/lehue_identity.sqlite3
-      RAW_ARCHIVE_DIR: /app/data/raw/gps
+      LEHUE_ENV: ${LEHUE_ENV:?Set LEHUE_ENV=test or LEHUE_ENV=prod before starting}
+      DATA_ROOT: /app/data
     volumes:
       - ./server/data:/app/data
     expose:
