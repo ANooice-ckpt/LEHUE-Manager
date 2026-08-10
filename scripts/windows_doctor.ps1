@@ -25,7 +25,7 @@ if (-not (Test-Path $Python)) {
 Write-Host "Python venv : present"
 & $Python -c "import sys; print('sys.prefix  :', sys.prefix); print('python      :', sys.executable)"
 
-$checks = @("fastapi", "uvicorn", "httpx", "pytest")
+$checks = @("fastapi", "uvicorn", "httpx", "pytest", "tzdata")
 $failed = $false
 foreach ($module in $checks) {
     & $Python -c "import $module" 2>$null
@@ -35,6 +35,14 @@ foreach ($module in $checks) {
         Write-Host ("{0,-10}: MISSING" -f $module) -ForegroundColor Red
         $failed = $true
     }
+}
+
+& $Python -c "from zoneinfo import ZoneInfo; ZoneInfo('Asia/Shanghai')" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "timezone   : MISSING Asia/Shanghai data" -ForegroundColor Red
+    $failed = $true
+} else {
+    Write-Host "timezone   : OK (Asia/Shanghai)" -ForegroundColor Green
 }
 
 if ($failed) {

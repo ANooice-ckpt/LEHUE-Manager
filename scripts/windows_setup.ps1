@@ -48,7 +48,7 @@ Write-Host "[2/5] Installing runtime + development/test dependencies..."
 Invoke-NativeChecked $Python -m pip install --no-cache-dir --disable-pip-version-check -r $DevRequirements
 
 Write-Host "[3/5] Verifying required Python modules..."
-Invoke-NativeChecked $Python -c "import fastapi, uvicorn, httpx, pytest; print('fastapi', fastapi.__version__); print('uvicorn', uvicorn.__version__); print('httpx', httpx.__version__); print('pytest', pytest.__version__)"
+Invoke-NativeChecked $Python -c "from zoneinfo import ZoneInfo; import fastapi, uvicorn, httpx, pytest, tzdata; ZoneInfo('Asia/Shanghai'); print('fastapi', fastapi.__version__); print('uvicorn', uvicorn.__version__); print('httpx', httpx.__version__); print('pytest', pytest.__version__)"
 
 if (-not (Test-Path $EnvFile)) {
     Write-Host "[4/5] Creating .env with a random admin token..."

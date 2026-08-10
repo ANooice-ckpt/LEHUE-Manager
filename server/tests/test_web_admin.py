@@ -1,48 +1,108 @@
 import importlib
+import io
 import tempfile
+import zipfile
 from pathlib import Path
+
+
+def _reload_stack(monkeypatch, td: str, domain: str = "localhost"):
+    monkeypatch.setenv("DATA_DIR", td)
+    monkeypatch.setenv("DB_PATH", str(Path(td) / "main.sqlite3"))
+    monkeypatch.setenv("IDENTITY_DB_PATH", str(Path(td) / "identity.sqlite3"))
+    monkeypatch.setenv("RAW_ARCHIVE_DIR", str(Path(td) / "raw"))
+    monkeypatch.setenv("ADMIN_TOKEN", "admin-token-for-test")
+    monkeypatch.setenv("DOMAIN", domain)
+
+    import app.core.config as config; importlib.reload(config)
+    import app.core.db as dbmod; importlib.reload(dbmod)
+    import app.core.identity_db as idb; importlib.reload(idb)
+    import app.core.security as sec; importlib.reload(sec)
+    import app.core.web_security as ws; importlib.reload(ws)
+    import app.modules.gps.service as gps; importlib.reload(gps)
+    import app.modules.admin.service as svc; importlib.reload(svc)
+    import app.modules.admin.router as admin_router; importlib.reload(admin_router)
+    import app.modules.gps.router as gps_router; importlib.reload(gps_router)
+    import app.main as main; importlib.reload(main)
+    dbmod.init_db(); idb.init_identity_db()
+    return config, dbmod, idb, ws, svc, main
 
 
 def test_web_admin_flow(monkeypatch):
     with tempfile.TemporaryDirectory() as td:
-        monkeypatch.setenv("DATA_DIR", td)
-        monkeypatch.setenv("DB_PATH", str(Path(td)/"main.sqlite3"))
-        monkeypatch.setenv("IDENTITY_DB_PATH", str(Path(td)/"identity.sqlite3"))
-        monkeypatch.setenv("RAW_ARCHIVE_DIR", str(Path(td)/"raw"))
-        monkeypatch.setenv("ADMIN_TOKEN", "admin-token")
-        monkeypatch.setenv("DOMAIN", "localhost")
-
-        import app.core.config as config; importlib.reload(config)
-        import app.core.db as dbmod; importlib.reload(dbmod)
-        import app.core.identity_db as idb; importlib.reload(idb)
-        import app.core.security as sec; importlib.reload(sec)
-        import app.core.web_security as ws; importlib.reload(ws)
-        import app.modules.gps.service as gps; importlib.reload(gps)
-        import app.modules.admin.service as svc; importlib.reload(svc)
-        import app.modules.admin.router as admin_router; importlib.reload(admin_router)
-        import app.modules.gps.router as gps_router; importlib.reload(gps_router)
-        import app.main as main; importlib.reload(main)
-
-        dbmod.init_db(); idb.init_identity_db(); ws.create_admin_user("pi","pw","pi","PI")
+        config, dbmod, idb, ws, svc, main = _reload_stack(monkeypatch, td)
         from fastapi.testclient import TestClient
-        with TestClient(main.app) as client:
-            r=client.post('/api/v1/web/login',json={'username':'pi','password':'pw'})
-            assert r.status_code==200
-            csrf=r.json()['csrf_token']; h={'X-CSRF-Token':csrf}
-            r=client.post('/api/v1/web/candidates',json={'name':'Test','phone':'123','phone_os':'iOS'},headers=h)
-            assert r.status_code==200; cuid=r.json()['candidate_uid']
-            r=client.post('/api/v1/web/devices',json={'pack_id':'D01','status':'available','light_serial':'L01','ax3_serial':'A01'},headers=h)
-            assert r.status_code==200
-            r=client.post(f'/api/v1/web/candidates/{cuid}/promote',json={'participant_id':'001','expected_start':'2026-09-01','expected_end':'2026-09-14','pack_id':'D01','assigned_ra':'ra1'},headers=h)
-            assert r.status_code==200
-            r=client.post('/api/v1/web/subjects/001/gps-credential',json={},headers=h)
-            assert r.status_code==200 and r.json()['password']
-            r=client.post('/api/v1/web/subjects/001/start',json={'pack_id':'D01','start_date':'2026-09-01','end_date':'2026-09-14'},headers=h)
-            assert r.status_code==200
-            r=client.post('/api/v1/web/incidents',json={'participant_id':'001','date_local':'2026-09-02','source':'GPS','incident_type':'offline','summary':'GPS offline'},headers=h)
-            assert r.status_code==200
-            d=client.get('/api/v1/web/dashboard').json()
-            assert d['metrics']['running']==1 and d['metrics']['open_incidents']==1
-            assert client.get('/api/v1/web/data-sources').status_code==200
-            assert client.get('/api/v1/web/architecture').status_code==200
-            assert client.get('/admin').status_code==200
+
+        with TestClient(main.app, base_url='http://127.0.0.1:8085') as client:
+            setup = client.get('/api/v1/web/setup-status')
+            assert setup.status_code == 200
+            assert setup.json() == {"initialized": False, "setup_token_required": False}
+
+            # First account is created from the browser, without CLI on localhost.
+            r = client.post('/api/v1/web/setup', json={
+                'username': 'pi', 'display_name': 'PI', 'password': 'strong-password-01'
+            })
+            assert r.status_code == 200
+            csrf = r.json()['csrf_token']; h = {'X-CSRF-Token': csrf}
+
+            # The bootstrap endpoint permanently closes after the first account.
+            r2 = client.post('/api/v1/web/setup', json={
+                'username': 'other', 'password': 'another-strong-password'
+            })
+            assert r2.status_code == 409
+            assert client.get('/api/v1/web/setup-status').json()['initialized'] is True
+
+            # PI can create an RA from the Web Admin; blank password auto-generates one.
+            r = client.post('/api/v1/web/users', json={
+                'username': 'ra01', 'display_name': 'RA 01', 'role': 'ra', 'password': ''
+            }, headers=h)
+            assert r.status_code == 200 and len(r.json()['password']) >= 10
+            ra_password = r.json()['password']
+            users = client.get('/api/v1/web/users').json()
+            assert {u['username'] for u in users} == {'pi', 'ra01'}
+
+            # Core V5-style operating flow still works.
+            r = client.post('/api/v1/web/candidates', json={'name':'Test','phone':'123','phone_os':'iOS'}, headers=h)
+            assert r.status_code == 200; cuid = r.json()['candidate_uid']
+            assert client.post('/api/v1/web/devices', json={'pack_id':'D01','status':'available','light_serial':'L01','ax3_serial':'A01'}, headers=h).status_code == 200
+            assert client.post(f'/api/v1/web/candidates/{cuid}/promote', json={'participant_id':'001','expected_start':'2026-09-01','expected_end':'2026-09-14','pack_id':'D01','assigned_ra':'ra01'}, headers=h).status_code == 200
+            r = client.post('/api/v1/web/subjects/001/gps-credential', json={}, headers=h)
+            assert r.status_code == 200 and r.json()['password']
+            assert client.post('/api/v1/web/subjects/001/start', json={'pack_id':'D01','start_date':'2026-09-01','end_date':'2026-09-14'}, headers=h).status_code == 200
+            assert client.post('/api/v1/web/incidents', json={'participant_id':'001','date_local':'2026-09-02','source':'GPS','incident_type':'offline','summary':'GPS offline'}, headers=h).status_code == 200
+            d = client.get('/api/v1/web/dashboard').json()
+            assert d['metrics']['running'] == 1 and d['metrics']['open_incidents'] == 1
+            assert client.get('/api/v1/web/data-sources').status_code == 200
+            assert client.get('/api/v1/web/architecture').status_code == 200
+            assert client.get('/admin').status_code == 200
+
+            # Online SQLite backup is downloadable and intentionally drops sessions.
+            backup = client.get('/api/v1/web/backup')
+            assert backup.status_code == 200
+            with zipfile.ZipFile(io.BytesIO(backup.content)) as zf:
+                assert {'lehue.sqlite3', 'lehue_identity.sqlite3', 'manifest.json'} <= set(zf.namelist())
+
+            # RA can log in, but cannot manage accounts or download sensitive backup.
+            client.post('/api/v1/web/logout', json={}, headers=h)
+            r = client.post('/api/v1/web/login', json={'username':'ra01','password':ra_password})
+            assert r.status_code == 200
+            ra_csrf = r.json()['csrf_token']; rh = {'X-CSRF-Token': ra_csrf}
+            assert client.get('/api/v1/web/users').status_code == 403
+            assert client.get('/api/v1/web/backup').status_code == 403
+            assert client.post('/api/v1/web/users', json={'username':'x','role':'ra'}, headers=rh).status_code == 403
+
+
+def test_public_first_setup_requires_server_token(monkeypatch):
+    with tempfile.TemporaryDirectory() as td:
+        _, _, _, _, _, main = _reload_stack(monkeypatch, td, domain='gps.example.com')
+        from fastapi.testclient import TestClient
+        with TestClient(main.app, base_url='https://gps.example.com') as client:
+            s = client.get('/api/v1/web/setup-status').json()
+            assert s == {"initialized": False, "setup_token_required": True}
+            denied = client.post('/api/v1/web/setup', json={
+                'username':'pi', 'password':'strong-password-01', 'setup_token':'wrong'
+            })
+            assert denied.status_code == 403
+            ok = client.post('/api/v1/web/setup', json={
+                'username':'pi', 'password':'strong-password-01', 'setup_token':'admin-token-for-test'
+            })
+            assert ok.status_code == 200

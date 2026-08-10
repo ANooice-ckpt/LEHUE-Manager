@@ -1,81 +1,63 @@
-# LEHUE Web Admin v0.3
+# LEHUE Web Admin v0.3.1
 
-v0.3 只搬 **实验运营与采集状态**，不搬科研分析。
+v0.3.1 只搬 **实验运营与采集状态**，科研分析继续留在本地。
 
 ## 1. 本地启动
-
-第一次：
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\windows_setup.ps1
-.\scripts\windows_create_admin.ps1 -Username pi -Role pi -DisplayName "PI"
 .\scripts\windows_start.ps1
 ```
 
-浏览器打开：
+打开 `http://127.0.0.1:8085/admin`。
 
-- `http://127.0.0.1:8085/admin`
+- 若尚无管理员：页面进入“初始化管理员”，直接创建首个 PI。
+- 若已有管理员：只显示登录页，不存在公开注册入口。
 
-服务器部署后则是：
+## 2. 服务器首次初始化
 
-- `https://你的域名/admin`
+公网第一次打开 `/admin` 时，除用户名/密码外还需要“服务器初始化密钥”，即服务器 `.env` 中的 `ADMIN_TOKEN`。首个 PI 创建后，初始化接口永久关闭；仅凭网址无法再创建账号。
 
-## 2. 当前页面
+`windows_create_admin.ps1` / `bootstrap_admin.py` 仍保留为故障恢复工具，但不再是正常注册流程。
+
+## 3. PI / RA 权限
+
+PI 在“系统”页可以：
+
+- 新增 PI 或 RA；
+- 自填密码，或留空让系统生成一次性强密码；
+- 禁用/启用其他账号；
+- 重置密码；
+- 下载系统状态备份。
+
+RA 可以使用日常实验运营页面，但不能管理账号或下载包含身份/GPS的系统备份。系统禁止当前 PI 自己禁用自己，也禁止禁用最后一个有效 PI。
+
+## 4. 系统状态备份
+
+“系统 → 下载系统状态备份”使用 SQLite online backup API，在服务器继续运行时生成一致性快照。ZIP 包含：
+
+- `lehue.sqlite3`：被试运行、设备、异常、GPS credential hash、GPS/raw events、审计日志等；
+- `lehue_identity.sqlite3`：PI/RA 账号、候选人身份/联系方式、联系日志等；
+- `manifest.json`：版本、生成时间、记录计数与 SHA256。
+
+备份会清除 `web_sessions`，因此恢复后所有人需要重新登录；账号及原密码仍有效。`server/data/raw/gps` 的 JSONL 镜像不在这个 ZIP 中，后续单独做定时/OSS 备份。
+
+## 5. 当前页面
 
 - 总览：候选、预约、运行、开放异常、可用设备包、已有 GPS 被试。
 - 被试运行：三位数 ID、日期、设备包、RA、GPS 最近回传；可启动运行和生成 OwnTracks 凭据。
 - 候选池：保留旧 V5 的候选→正式 ID/预约逻辑。
 - 设备包：以 pack 为最小周转单元，预留 Lighting / AX3 serial。
-- 异常：执行期异常中心；只处理需要人介入的事项。
-- 数据源：GPS / Lighting / Questionnaire / AX3 / Identity 的接入方式、存储和自动化状态。
-- 系统架构：用业务语言显示云端管理、各数据源、数据库、OSS 与本地科研工作站之间的边界。
+- 异常：执行期异常中心。
+- 数据源：GPS / Lighting / Questionnaire / AX3 / Identity 的接入与存储状态。
+- 系统架构：显示云端运营、各数据源、数据库、OSS 与本地科研工作站边界。
+- 系统（PI）：账号管理与系统状态备份。
 
-## 3. 两个数据库
-
-`server/data/lehue.sqlite3`
-
-- 伪匿名运营状态；
-- GPS credential hash / raw event / standardized location；
-- study_subjects；
-- device_packs；
-- incidents；
-- audit_log。
-
-`server/data/lehue_identity.sqlite3`
-
-- admin users / sessions；
-- candidate identity / contact information；
-- contact_logs（表已预留，UI 后续再接）。
-
-二者仍由同一个 Web Admin 使用，但物理文件分离，便于未来独立备份、权限与迁移。
-
-## 4. 从旧 V5 state.json 迁移
-
-先备份旧系统，然后在 `server` 目录运行：
+## 6. 从旧 V5 state.json 迁移
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\migrate_v5_state.py "D:\path\to\old\data\state.json"
 ```
 
-会迁移：
-
-- candidates；
-- subjects → study_subjects；
-- devices → device_packs；
-- issues → incidents。
-
-故意不迁移：旧问卷解析缓存、Lighting/GPS 文件 manifest、daily_records、scan_index。它们属于旧的“本地扫描一切”数据链，后续分别由 Questionnaire adapter、OSS/Lighting adapter、GPS realtime ingest 重建。
-
-## 5. 权限
-
-第一版支持 `pi` 和 `ra` 账号；账号从服务器脚本创建，不在网页公开注册。
-
-```bash
-python scripts/bootstrap_admin.py pi --role pi --display-name "PI"
-python scripts/bootstrap_admin.py ra01 --role ra --display-name "RA 01"
-```
-
-密码只显示一次，数据库只存 salted PBKDF2 hash。Web 使用 12 小时 HttpOnly session cookie，写操作还要求 CSRF token。
-
-v0.3 暂未细分 PI 与 RA 的每一个按钮权限；角色字段和审计日志先落地，后续在真实协作流程明确后再收紧，避免现在过度设计。
+迁移 candidates、subjects、devices、issues；不迁移旧问卷缓存、文件 manifest、daily_records 和 scan_index。

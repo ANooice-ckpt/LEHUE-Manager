@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.1 - 2026-08-10
+
+- Replaced command-line-first account bootstrap with a browser first-run setup flow.
+- Public deployments require the server ADMIN_TOKEN for the one-time first PI bootstrap; after the first account exists, bootstrap is permanently closed.
+- Added PI-only Web account management: create PI/RA accounts, disable/enable accounts and reset passwords.
+- Added PI-only one-click system-state backup using SQLite online backup; active web sessions and raw/gps JSONL mirror are excluded.
+- Added tzdata as a runtime dependency and Windows timezone diagnostics for Asia/Shanghai.
+- Expanded tests for public-bootstrap protection, PI/RA permission boundaries and backup generation.
+
 ## 0.3.0 - 2026-08-10
 
 - Added a simple Web Admin while keeping scientific analysis local.
