@@ -207,6 +207,14 @@ def gps_credential(participant_id: str, operator=Depends(require_operator_write)
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@router.post("/api/v1/web/subjects/{participant_id}/portal")
+def participant_portal(participant_id: str, operator=Depends(require_operator_write)):
+    try:
+        return {"participant_id": participant_id, "path": service.create_portal_link(participant_id, operator.username)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @router.post("/api/v1/web/subjects/{participant_id}/start")
 async def start_subject(participant_id: str, request: Request, operator=Depends(require_operator_write)):
     try:
