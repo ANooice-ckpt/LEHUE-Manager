@@ -1,8 +1,21 @@
 import importlib
 import tempfile
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+
+def test_questionnaire_date_rollover(monkeypatch):
+    monkeypatch.setenv("STUDY_TIMEZONE", "Asia/Shanghai")
+    monkeypatch.setenv("QUESTIONNAIRE_EVENING_CUTOFF_HOUR", "12")
+    import app.core.config as config; importlib.reload(config)
+    import app.modules.participant.service as portal; importlib.reload(portal)
+
+    subject = {"start_date": "2026-08-15", "expected_start": "", "end_date": "2026-08-28", "expected_end": ""}
+    early_morning = datetime(2026, 8, 16, 7, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    assert portal.form_target_date("evening", early_morning) == date(2026, 8, 15)
+    assert portal._form_clock(subject, "evening", early_morning)[:2] == ("2026-08-15", 1)
+    assert portal._form_clock(subject, "morning", early_morning)[:2] == ("2026-08-16", 2)
 
 
 def test_participant_portal_questionnaire_flow(monkeypatch):

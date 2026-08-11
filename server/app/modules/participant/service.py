@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import secrets
 import sqlite3
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -55,23 +55,38 @@ def _resolve_subject(token: str):
     return row
 
 
-def _study_clock(subject) -> tuple[str, int, int]:
-    today = local_today()
+def _clock_for_date(subject, target: date) -> tuple[str, int, int]:
     start_raw = subject["start_date"] or subject["expected_start"]
     end_raw = subject["end_date"] or subject["expected_end"]
     if not start_raw:
-        return today.isoformat(), 0, 14
+        return target.isoformat(), 0, 14
     try:
         start = date.fromisoformat(start_raw)
     except ValueError:
-        return today.isoformat(), 0, 14
+        return target.isoformat(), 0, 14
     try:
         end = date.fromisoformat(end_raw) if end_raw else start
     except ValueError:
         end = start
     total = max(1, (end - start).days + 1)
-    day = (today - start).days + 1
-    return today.isoformat(), day, total
+    day = (target - start).days + 1
+    return target.isoformat(), day, total
+
+
+def _study_clock(subject) -> tuple[str, int, int]:
+    return _clock_for_date(subject, local_today())
+
+
+def form_target_date(form_key: str, local_now: datetime | None = None) -> date:
+    current = local_now or datetime.now(ZoneInfo(settings.study_timezone))
+    target = current.date()
+    if form_key == "evening" and current.hour < settings.questionnaire_evening_cutoff_hour:
+        target -= timedelta(days=1)
+    return target
+
+
+def _form_clock(subject, form_key: str, local_now: datetime | None = None) -> tuple[str, int, int]:
+    return _clock_for_date(subject, form_target_date(form_key, local_now))
 
 
 def _gps_state(participant_id: str) -> dict:
@@ -88,22 +103,26 @@ def portal_state(token: str) -> dict:
     if not subject:
         raise LookupError("invalid participant link")
     date_local, study_day, total_days = _study_clock(subject)
+    clocks = {definition["key"]: _form_clock(subject, definition["key"]) for definition in list_forms()}
     with db() as conn:
         completed = {
-            r["form_key"]: r["submitted_at_utc"]
+            (r["form_key"], r["date_local"]): r["submitted_at_utc"]
             for r in conn.execute(
-                "SELECT form_key,submitted_at_utc FROM questionnaire_responses WHERE participant_id=? AND date_local=?",
-                (subject["participant_id"], date_local),
+                "SELECT form_key,date_local,submitted_at_utc FROM questionnaire_responses WHERE participant_id=?",
+                (subject["participant_id"],),
             )
         }
     forms = []
     for definition in list_forms():
         key = definition["key"]
+        form_date, form_day, _ = clocks[key]
         forms.append({
             **definition,
             "version": FORM_VERSION,
-            "completed": key in completed,
-            "submitted_at_utc": completed.get(key),
+            "date_local": form_date,
+            "study_day": form_day,
+            "completed": (key, form_date) in completed,
+            "submitted_at_utc": completed.get((key, form_date)),
         })
     return {
         "study_title": "光迹计划（北京）",
@@ -162,7 +181,7 @@ def submit_questionnaire(token: str, form_key: str, answers: dict) -> dict:
     form = get_form(form_key)
     if not form:
         raise LookupError("questionnaire not found")
-    date_local, study_day, _ = _study_clock(subject)
+    date_local, study_day, _ = _form_clock(subject, form_key)
     if study_day < 1:
         raise ValueError("实验尚未开始")
     normalized = validate_answers(form, answers or {})
@@ -183,4 +202,4 @@ def submit_questionnaire(token: str, form_key: str, answers: dict) -> dict:
             )
     except sqlite3.IntegrityError as exc:
         raise ValueError("今日该问卷已经提交，无需重复填写") from exc
-    return {"ok": True, "form_key": form_key, "submitted_at_utc": submitted}
+    return {"ok": True, "form_key": form_key, "date_local": date_local, "study_day": study_day, "submitted_at_utc": submitted}

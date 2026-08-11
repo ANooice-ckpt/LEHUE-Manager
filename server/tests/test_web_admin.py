@@ -70,6 +70,10 @@ def test_web_admin_flow(monkeypatch):
 
             r = client.post('/api/v1/web/candidates', json={'name':'Test','phone':'123','phone_os':'iOS'}, headers=h)
             assert r.status_code == 200; cuid = r.json()['candidate_uid']
+            edited = client.put(f'/api/v1/web/candidates/{cuid}', json={'name':'Edited','phone_os':'Android','availability':'周末'}, headers=h)
+            assert edited.status_code == 200
+            candidate = next(x for x in client.get('/api/v1/web/candidates').json() if x['candidate_uid'] == cuid)
+            assert candidate['name'] == 'Edited' and candidate['phone_os'] == 'Android'
             assert client.post('/api/v1/web/devices', json={'pack_id':'D01','status':'available','light_serial':'L01','ax3_serial':'A01'}, headers=h).status_code == 200
             assert client.post(f'/api/v1/web/candidates/{cuid}/promote', json={'participant_id':'001','expected_start':'2026-09-01','expected_end':'2026-09-14','pack_id':'D01','assigned_ra':'ra01'}, headers=h).status_code == 200
             r = client.post('/api/v1/web/subjects/001/gps-credential', json={}, headers=h)
@@ -94,6 +98,10 @@ def test_web_admin_flow(monkeypatch):
             old_token = portal.json()['path'].removeprefix('/p/')
             assert client.get(f'/api/v1/portal/{old_token}').status_code == 404
             assert client.post('/api/v1/web/subjects/001/start', json={'pack_id':'D01','start_date':'2026-09-01','end_date':'2026-09-14'}, headers=h).status_code == 200
+            edited_subject = client.post('/api/v1/web/subjects/001', json={'batch_id':'B2','assigned_ra':'ra01','planned_end':'2026-09-15','notes':'late return'}, headers=h)
+            assert edited_subject.status_code == 200
+            subject = next(x for x in client.get('/api/v1/web/subjects').json() if x['participant_id'] == '001')
+            assert subject['batch_id'] == 'B2' and subject['end_date'] == '2026-09-15'
             track = client.get('/api/v1/web/subjects/001/gps-track?hours=12')
             assert track.status_code == 200
             assert track.json()['total_point_count'] == 0

@@ -12,6 +12,7 @@ def _reload(monkeypatch, td: str):
     monkeypatch.setenv("RAW_ARCHIVE_DIR", str(Path(td) / "raw" / "gps"))
     monkeypatch.setenv("RAW_LIGHT_DIR", str(Path(td) / "raw" / "lighting"))
     monkeypatch.setenv("STUDY_TIMEZONE", "Asia/Shanghai")
+    monkeypatch.setenv("QC_DAY_CLOSE_HOUR", "0")
 
     import app.core.config as config; importlib.reload(config)
     import app.core.db as dbmod; importlib.reload(dbmod)

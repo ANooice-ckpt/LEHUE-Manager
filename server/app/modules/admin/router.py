@@ -198,6 +198,15 @@ async def create_candidate(request: Request, operator=Depends(require_operator_w
     return {"candidate_uid": service.add_candidate(await request.json(), operator.username)}
 
 
+@router.put("/api/v1/web/candidates/{candidate_uid}")
+async def candidate_update(candidate_uid: str, request: Request, operator=Depends(require_operator_write)):
+    try:
+        service.update_candidate(candidate_uid, await request.json(), operator.username)
+        return {"ok": True}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @router.post("/api/v1/web/candidates/import-s0")
 async def import_s0(request: Request, operator=Depends(require_operator_write)):
     try:
@@ -225,6 +234,15 @@ def subject_gps_track(participant_id: str, hours: int = 12, operator=Depends(req
         return service.gps_track(participant_id, hours)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/api/v1/web/subjects/{participant_id}")
+async def subject_update(participant_id: str, request: Request, operator=Depends(require_operator_write)):
+    try:
+        service.update_subject(participant_id, await request.json(), operator.username)
+        return {"ok": True}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

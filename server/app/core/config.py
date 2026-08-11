@@ -107,6 +107,8 @@ class Settings:
     qc_gap_warning_seconds: int = _int("QC_GAP_WARNING_SECONDS", 300)
     qc_delay_warning_seconds: int = _int("QC_DELAY_WARNING_SECONDS", 120)
     qc_poor_accuracy_m: int = _int("QC_POOR_ACCURACY_M", 50)
+    questionnaire_evening_cutoff_hour: int = _int("QUESTIONNAIRE_EVENING_CUTOFF_HOUR", 12)
+    qc_day_close_hour: int = _int("QC_DAY_CLOSE_HOUR", 18)
     gps_tile_url: str = os.getenv(
         "GPS_TILE_URL", "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
     ).strip()

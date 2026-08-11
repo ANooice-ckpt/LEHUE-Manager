@@ -470,7 +470,8 @@ def _utc_bounds(day: date) -> tuple[str, str]:
 
 
 def daily_qc_rows() -> list[dict]:
-    today = datetime.now(ZoneInfo(settings.study_timezone)).date()
+    now_local = datetime.now(ZoneInfo(settings.study_timezone))
+    today = now_local.date()
     with db() as conn:
         subjects = [dict(row) for row in conn.execute("SELECT * FROM study_subjects WHERE status IN ('running','closed','finished') AND start_date<>'' ORDER BY participant_id")]
         forms = {(row["participant_id"], row["date_local"], row["form_key"]) for row in conn.execute("SELECT participant_id,date_local,form_key FROM questionnaire_responses")}
@@ -517,7 +518,9 @@ def daily_qc_rows() -> list[dict]:
                 evening = (subject["participant_id"], day_text, "evening") in forms
                 morning = (subject["participant_id"], morning_text, "morning") in forms
                 issues: list[dict[str, str]] = []
-                due = exposure_day < today
+                due = exposure_day < today - timedelta(days=1) or (
+                    exposure_day == today - timedelta(days=1) and now_local.hour >= settings.qc_day_close_hour
+                )
                 if due:
                     if not evening:
                         issues.append({"type": "missing_evening", "label": "当晚问卷"})

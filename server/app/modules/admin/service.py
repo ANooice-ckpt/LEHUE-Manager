@@ -5,7 +5,7 @@ import re
 import secrets
 import base64
 import binascii
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -21,6 +21,10 @@ from app.modules.light import service as light_service
 
 SUBJECT_RE = re.compile(r"^\d{3}$")
 PACK_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{1,15}$")
+CANDIDATE_EDIT_FIELDS = [
+    "name", "phone", "wechat", "source", "sex", "age_group", "identity_type", "light_type",
+    "work_district", "home_district", "phone_os", "pickup_method", "availability", "notes",
+]
 
 
 def now_iso() -> str:
@@ -39,19 +43,26 @@ def audit(operator: str, action: str, entity_type: str = "", entity_id: str = ""
         )
 
 
-def _questionnaire_counts(conn, participant_ids: list[str], date_local: str) -> dict[str, int]:
+def _questionnaire_counts(conn, participant_ids: list[str]) -> dict[str, int]:
     if not participant_ids:
         return {}
     placeholders = ",".join("?" for _ in participant_ids)
+    morning_date = participant_service.form_target_date("morning").isoformat()
+    evening_date = participant_service.form_target_date("evening").isoformat()
     rows = conn.execute(
-        f"SELECT participant_id,COUNT(*) n FROM questionnaire_responses WHERE date_local=? AND participant_id IN ({placeholders}) GROUP BY participant_id",
-        [date_local, *participant_ids],
+        f"""SELECT participant_id,COUNT(*) n FROM questionnaire_responses
+            WHERE participant_id IN ({placeholders})
+              AND ((form_key='morning' AND date_local=?) OR (form_key='evening' AND date_local=?))
+            GROUP BY participant_id""",
+        [*participant_ids, morning_date, evening_date],
     ).fetchall()
     return {r["participant_id"]: int(r["n"]) for r in rows}
 
 
 def dashboard() -> dict[str, Any]:
     today = local_today()
+    morning_date = participant_service.form_target_date("morning").isoformat()
+    evening_date = participant_service.form_target_date("evening").isoformat()
     with identity_db() as conn:
         candidates = conn.execute("SELECT COUNT(*) n FROM candidates WHERE in_latest_snapshot=1 OR linked_participant_id IS NOT NULL").fetchone()["n"]
     with db() as conn:
@@ -60,10 +71,14 @@ def dashboard() -> dict[str, Any]:
         open_incidents = conn.execute("SELECT COUNT(*) n FROM incidents WHERE status!='closed'").fetchone()["n"]
         available_packs = conn.execute("SELECT COUNT(*) n FROM device_packs WHERE status='available'").fetchone()["n"]
         gps_subjects = conn.execute("SELECT COUNT(DISTINCT participant_id) n FROM gps_locations").fetchone()["n"]
-        questionnaire_today = conn.execute("SELECT COUNT(*) n FROM questionnaire_responses WHERE date_local=?", (today,)).fetchone()["n"]
+        questionnaire_today = conn.execute(
+            """SELECT COUNT(*) n FROM questionnaire_responses
+               WHERE (form_key='morning' AND date_local=?) OR (form_key='evening' AND date_local=?)""",
+            (morning_date, evening_date),
+        ).fetchone()["n"]
         recent_incidents = [dict(r) for r in conn.execute("SELECT * FROM incidents WHERE status!='closed' ORDER BY updated_at_utc DESC LIMIT 12")]
         running = [dict(r) for r in conn.execute("SELECT * FROM study_subjects WHERE status='running' ORDER BY start_date, participant_id LIMIT 30")]
-        counts = _questionnaire_counts(conn, [r["participant_id"] for r in running], today)
+        counts = _questionnaire_counts(conn, [r["participant_id"] for r in running])
         for s in running:
             s["gps_last_received_at_utc"] = conn.execute("SELECT MAX(received_at_utc) x FROM gps_locations WHERE participant_id=?", (s["participant_id"],)).fetchone()["x"]
             s["questionnaire_today_completed"] = counts.get(s["participant_id"], 0)
@@ -124,11 +139,26 @@ def add_candidate(data: dict[str, Any], operator: str):
     return uid
 
 
+def update_candidate(candidate_uid: str, data: dict[str, Any], operator: str):
+    now = now_iso()
+    with identity_db() as conn:
+        row = conn.execute("SELECT * FROM candidates WHERE candidate_uid=?", (candidate_uid,)).fetchone()
+        if not row:
+            raise ValueError("candidate not found")
+        values = [str(data.get(field, row[field]) or "").strip() for field in CANDIDATE_EDIT_FIELDS]
+        assignments = ",".join(f"{field}=?" for field in CANDIDATE_EDIT_FIELDS)
+        conn.execute(
+            f"UPDATE candidates SET {assignments},updated_at_utc=? WHERE candidate_uid=?",
+            [*values, now, candidate_uid],
+        )
+    audit(operator, "candidate.update", "candidate", candidate_uid)
+
+
 def list_subjects():
     today = local_today()
     with db() as conn:
         rows = [dict(r) for r in conn.execute("SELECT * FROM study_subjects ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'scheduled' THEN 1 ELSE 2 END, participant_id")]
-        counts = _questionnaire_counts(conn, [r["participant_id"] for r in rows], today)
+        counts = _questionnaire_counts(conn, [r["participant_id"] for r in rows])
         gps_last = {
             r["participant_id"]: r["last_received_at_utc"]
             for r in conn.execute(
@@ -156,6 +186,32 @@ def gps_track(participant_id: str, hours: int) -> dict[str, Any]:
         if not conn.execute("SELECT 1 FROM study_subjects WHERE participant_id=?", (participant_id,)).fetchone():
             raise LookupError("participant not found")
     return gps_service.track_diagnostic(participant_id, hours)
+
+
+def update_subject(participant_id: str, data: dict[str, Any], operator: str):
+    with db() as conn:
+        row = conn.execute("SELECT * FROM study_subjects WHERE participant_id=?", (participant_id,)).fetchone()
+        if not row:
+            raise ValueError("participant not found")
+        planned_end = str(data.get("planned_end", row["end_date"] or row["expected_end"]) or "").strip()
+        if planned_end:
+            try:
+                date.fromisoformat(planned_end)
+            except ValueError as exc:
+                raise ValueError("结束日期必须使用 YYYY-MM-DD") from exc
+        end_field = "end_date" if row["status"] == "running" else "expected_end"
+        conn.execute(
+            f"UPDATE study_subjects SET batch_id=?,assigned_ra=?,notes=?,{end_field}=?,updated_at_utc=? WHERE participant_id=?",
+            (
+                str(data.get("batch_id", row["batch_id"]) or "").strip(),
+                str(data.get("assigned_ra", row["assigned_ra"]) or "").strip(),
+                str(data.get("notes", row["notes"]) or "").strip(),
+                planned_end,
+                now_iso(),
+                participant_id,
+            ),
+        )
+    audit(operator, "subject.update", "participant", participant_id)
 
 
 def promote_candidate(candidate_uid: str, data: dict[str, Any], operator: str):
