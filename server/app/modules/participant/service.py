@@ -179,6 +179,7 @@ def portal_state(token: str) -> dict:
     exposure_date = form_target_date("evening", local_now)
     lighting = light_service.portal_light_state(subject["participant_id"], exposure_date.isoformat())
     lighting["date_local"] = exposure_date.isoformat()
+    lighting["direct_upload"] = settings.light_storage_backend == "oss"
     lighting["time_scope"] = form_time_scope("evening", exposure_date)
     return {
         "study_title": "光迹计划（北京）",
@@ -223,6 +224,18 @@ def _lighting_participant(token: str, date_local: str) -> str:
 def submit_lighting_path(token: str, date_local: str, filename: str, path: Path) -> dict:
     participant_id = _lighting_participant(token, date_local)
     return light_service.store_upload_path(participant_id, date_local, filename, path, "participant_portal")
+
+
+def prepare_lighting_direct(token: str, date_local: str, filename: str, size_bytes: int, sha256: str) -> dict:
+    participant_id = _lighting_participant(token, date_local)
+    return light_service.prepare_direct_upload(participant_id, date_local, filename, size_bytes, sha256)
+
+
+def complete_lighting_direct(token: str, upload_uid: str) -> dict:
+    subject = _resolve_subject(token)
+    if not subject:
+        raise LookupError("invalid participant link")
+    return light_service.complete_direct_upload(subject["participant_id"], upload_uid)
 
 
 def submit_questionnaire(token: str, form_key: str, answers: dict, calendar_date_local: str = "") -> dict:

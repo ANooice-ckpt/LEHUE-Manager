@@ -98,15 +98,26 @@ def test_prod_requires_oss_backend(monkeypatch):
     monkeypatch.setenv("LIGHT_STORAGE_BACKEND", "local")
     with pytest.raises(RuntimeError, match="PROD Lighting raw storage must use OSS"):
         config._light_storage_backend()
+    monkeypatch.setenv("OSS_CREDENTIAL_MODE", "access_key")
+    with pytest.raises(RuntimeError, match="PROD OSS access must use an ECS RAM role"):
+        config._oss_credential_mode()
 
 
-def test_oss_settings_require_bucket_endpoint_and_credentials():
+def test_oss_settings_support_role_and_explicit_test_credentials():
     with pytest.raises(RuntimeError, match="OSS_BUCKET"):
         config.Settings(light_storage_backend="oss")
+    role_settings = config.Settings(
+        light_storage_backend="oss",
+        oss_bucket="lehue-test",
+        oss_region="cn-hongkong",
+        oss_credential_mode="ecs_ram_role",
+    )
+    assert role_settings.oss_access_key_id == ""
     settings = config.Settings(
         light_storage_backend="oss",
         oss_bucket="lehue-test",
         oss_region="cn-hongkong",
+        oss_credential_mode="access_key",
         oss_access_key_id="test-key-id",
         oss_access_key_secret="test-key-secret",
     )
@@ -131,7 +142,7 @@ def test_existing_lighting_table_gets_storage_columns(monkeypatch, tmp_path):
 
     with closing(sqlite3.connect(db_path)) as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(lighting_files)")}
-        assert {"storage_backend", "object_key"} <= columns
+        assert {"storage_backend", "object_key", "upload_status"} <= columns
         assert conn.execute(
             "SELECT COUNT(*) FROM lighting_files WHERE object_key<>stored_path"
         ).fetchone()[0] == 0

@@ -327,7 +327,7 @@ def _parse_qc(filename: str, path: Path) -> dict:
         }
 
 
-def store_upload_path(participant_id: str, date_local: str, filename: str, source_path: Path, uploaded_by: str) -> dict:
+def _validate_upload(participant_id: str, date_local: str, filename: str, size_bytes: int) -> tuple[str, str, str, str]:
     participant_id = str(participant_id or "").strip()
     date_local = normalize_date(date_local)
     filename = Path(str(filename or "")).name
@@ -336,8 +336,6 @@ def store_upload_path(participant_id: str, date_local: str, filename: str, sourc
         raise ValueError("Lighting 暴露日期必须使用 YYYY-MM-DD")
     if suffix not in ALLOWED_EXTENSIONS:
         raise ValueError("Lighting 只支持 .csv、.xlsx 或 .txt")
-    source_path = Path(source_path)
-    size_bytes = source_path.stat().st_size
     if size_bytes <= 0:
         raise ValueError("Lighting 文件为空")
     if size_bytes > settings.light_upload_max_bytes:
@@ -351,6 +349,15 @@ def store_upload_path(participant_id: str, date_local: str, filename: str, sourc
     with db() as conn:
         if not conn.execute("SELECT 1 FROM study_subjects WHERE participant_id=?", (participant_id,)).fetchone():
             raise ValueError("participant not found")
+    return participant_id, date_local, filename, suffix
+
+
+def store_upload_path(participant_id: str, date_local: str, filename: str, source_path: Path, uploaded_by: str) -> dict:
+    source_path = Path(source_path)
+    size_bytes = source_path.stat().st_size
+    participant_id, date_local, filename, suffix = _validate_upload(
+        participant_id, date_local, filename, size_bytes
+    )
     digest = _sha256_file(source_path)
     with db() as conn:
         existing = conn.execute(
@@ -393,6 +400,81 @@ def store_upload_path(participant_id: str, date_local: str, filename: str, sourc
     return _public_upload(row)
 
 
+def prepare_direct_upload(participant_id: str, date_local: str, filename: str, size_bytes: int, sha256: str) -> dict:
+    if settings.light_storage_backend != "oss":
+        raise ValueError("Direct upload is available only with OSS storage")
+    participant_id, date_local, filename, suffix = _validate_upload(
+        participant_id, date_local, filename, int(size_bytes)
+    )
+    digest = str(sha256 or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError("Lighting SHA256 is invalid")
+    upload_uid = f"light_{secrets.token_hex(10)}"
+    object_key = f"raw/lighting/{participant_id}/{date_local}/{upload_uid}{suffix}"
+    now = now_iso()
+    with db() as conn:
+        conn.execute(
+            """INSERT OR IGNORE INTO lighting_files(
+                upload_uid,participant_id,date_local,original_filename,stored_path,storage_backend,object_key,
+                file_size_bytes,sha256,uploaded_at_utc,uploaded_by,parser_version,quality,upload_status
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                upload_uid, participant_id, date_local, filename, object_key, "oss", object_key,
+                int(size_bytes), digest, now, "participant_portal", PARSER_VERSION, "pending", "pending",
+            ),
+        )
+        row = conn.execute(
+            "SELECT * FROM lighting_files WHERE participant_id=? AND date_local=? AND sha256=?",
+            (participant_id, date_local, digest),
+        ).fetchone()
+    if row["upload_status"] == "qc":
+        result = _public_upload(row, duplicate=True)
+        result["direct"] = True
+        return result
+
+    storage = get_light_storage()
+    object_ready = False
+    if storage.exists(row["object_key"]):
+        head = storage.head(row["object_key"])
+        object_ready = head.size_bytes == row["file_size_bytes"] and head.sha256 == row["sha256"]
+    if object_ready:
+        with db() as conn:
+            conn.execute("UPDATE lighting_files SET upload_status='uploaded' WHERE upload_uid=?", (row["upload_uid"],))
+        return {"direct": True, "upload_uid": row["upload_uid"], "status": "uploaded", "uploaded": True}
+    with db() as conn:
+        conn.execute("UPDATE lighting_files SET upload_status='pending' WHERE upload_uid=?", (row["upload_uid"],))
+    signed = storage.presign_put(row["object_key"], row["sha256"], settings.oss_upload_url_seconds)
+    return {
+        "direct": True, "upload_uid": row["upload_uid"], "status": "pending", "uploaded": False,
+        "upload_url": signed["url"], "upload_headers": signed["headers"],
+        "expires_seconds": settings.oss_upload_url_seconds,
+    }
+
+
+def complete_direct_upload(participant_id: str, upload_uid: str) -> dict:
+    with db() as conn:
+        row = conn.execute(
+            "SELECT * FROM lighting_files WHERE upload_uid=? AND participant_id=? AND storage_backend='oss'",
+            (upload_uid, participant_id),
+        ).fetchone()
+    if not row:
+        raise ValueError("Lighting upload not found")
+    if row["upload_status"] == "qc":
+        return _public_upload(row, duplicate=True)
+    storage = get_light_storage()
+    if not storage.exists(row["object_key"]):
+        raise ValueError("Lighting upload is incomplete")
+    head = storage.head(row["object_key"])
+    if head.size_bytes != row["file_size_bytes"] or head.sha256 != row["sha256"]:
+        raise ValueError("Lighting uploaded object does not match the authorized file")
+    with db() as conn:
+        conn.execute(
+            "UPDATE lighting_files SET upload_status='uploaded',uploaded_at_utc=? WHERE upload_uid=?",
+            (now_iso(), upload_uid),
+        )
+    return rerun_qc(upload_uid)
+
+
 def rerun_qc(upload_uid: str) -> dict:
     with db() as conn:
         row = conn.execute("SELECT * FROM lighting_files WHERE upload_uid=?", (upload_uid,)).fetchone()
@@ -401,8 +483,12 @@ def rerun_qc(upload_uid: str) -> dict:
     storage = get_light_storage()
     if row["storage_backend"] != storage.backend:
         raise ValueError("Lighting storage backend does not match current environment")
+    if row["upload_status"] == "pending" and not storage.exists(row["object_key"]):
+        raise ValueError("Lighting upload is incomplete")
     qc_path = storage.download_to_temp(row["object_key"])
     try:
+        if qc_path.stat().st_size != row["file_size_bytes"] or _sha256_file(qc_path) != row["sha256"]:
+            raise ValueError("Lighting canonical raw size or SHA256 does not match its registration")
         summary = _parse_qc(row["original_filename"], qc_path)
     finally:
         qc_path.unlink(missing_ok=True)
@@ -410,7 +496,7 @@ def rerun_qc(upload_uid: str) -> dict:
         conn.execute(
             """UPDATE lighting_files SET parser_version=?,records_expected=?,records_total=?,records_valid=?,
                records_saturated=?,valid_pct=?,quality=?,photopic_mean=?,photopic_median=?,photopic_max=?,
-               melanopic_mean=?,melanopic_median=?,melanopic_max=?,parse_error=? WHERE upload_uid=?""",
+               melanopic_mean=?,melanopic_median=?,melanopic_max=?,parse_error=?,upload_status='qc' WHERE upload_uid=?""",
             (
                 PARSER_VERSION, summary["records_expected"], summary["records_total"], summary["records_valid"],
                 summary["records_saturated"], summary["valid_pct"], summary["quality"], summary["photopic_mean"],
@@ -434,8 +520,9 @@ def store_upload(participant_id: str, date_local: str, filename: str, raw: bytes
         Path(name).unlink(missing_ok=True)
 
 
-def _quality_rank(row: dict) -> tuple[int, float, int]:
+def _quality_rank(row: dict) -> tuple[int, int, float, int]:
     return (
+        0 if row.get("upload_status", "qc") == "qc" else 1,
         {"valid": 0, "insufficient": 1, "unreadable": 2}.get(row.get("quality"), 9),
         -float(row.get("valid_pct") or 0),
         -int(row.get("id") or 0),
@@ -452,6 +539,17 @@ def portal_light_state(participant_id: str, date_local: str) -> dict:
     row = best_for_date(participant_id, date_local)
     if not row:
         return {"status": "missing", "uploaded": False, "quality": None, "valid_pct": None, "filename": None}
+    upload_status = row.get("upload_status", "qc")
+    if upload_status != "qc":
+        return {
+            "status": upload_status,
+            "uploaded": upload_status == "uploaded",
+            "quality": None,
+            "valid_pct": None,
+            "filename": row["original_filename"],
+            "uploaded_at_utc": row["uploaded_at_utc"],
+            "message": "等待上传完成" if upload_status == "pending" else "等待 QC",
+        }
     return {
         "status": "done" if row["quality"] == "valid" else row["quality"],
         "uploaded": True,
@@ -504,7 +602,7 @@ def daily_qc_rows() -> list[dict]:
     with db() as conn:
         subjects = [dict(row) for row in conn.execute("SELECT * FROM study_subjects WHERE status IN ('running','closed','finished') AND start_date<>'' ORDER BY participant_id")]
         forms = {(row["participant_id"], row["date_local"], row["form_key"]) for row in conn.execute("SELECT participant_id,date_local,form_key FROM questionnaire_responses")}
-        light_rows = [dict(row) for row in conn.execute("SELECT * FROM lighting_files")]
+        light_rows = [dict(row) for row in conn.execute("SELECT * FROM lighting_files WHERE upload_status='qc'")]
     best: dict[tuple[str, str], dict] = {}
     for row in light_rows:
         key = (row["participant_id"], row["date_local"])

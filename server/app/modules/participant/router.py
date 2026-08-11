@@ -54,3 +54,30 @@ async def lighting_submit(portal_token: str, date_local: str, filename: str, req
     finally:
         if path is not None:
             path.unlink(missing_ok=True)
+
+
+@router.post("/api/v1/portal/{portal_token}/lighting/direct")
+async def lighting_direct_prepare(portal_token: str, request: Request):
+    data = await request.json()
+    try:
+        return service.prepare_lighting_direct(
+            portal_token,
+            str(data.get("date_local") or ""),
+            str(data.get("filename") or ""),
+            int(data.get("size_bytes") or 0),
+            str(data.get("sha256") or ""),
+        )
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Invalid or expired participant link")
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/api/v1/portal/{portal_token}/lighting/direct/{upload_uid}/complete")
+def lighting_direct_complete(portal_token: str, upload_uid: str):
+    try:
+        return service.complete_lighting_direct(portal_token, upload_uid)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Invalid or expired participant link")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))

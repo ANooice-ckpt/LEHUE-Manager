@@ -80,6 +80,15 @@ def _light_storage_backend() -> str:
     return value
 
 
+def _oss_credential_mode() -> str:
+    value = os.getenv("OSS_CREDENTIAL_MODE", "ecs_ram_role" if _RUNTIME_ENV == "prod" else "access_key").strip().lower()
+    if value not in {"ecs_ram_role", "access_key"}:
+        raise RuntimeError("OSS_CREDENTIAL_MODE must be ecs_ram_role or access_key")
+    if _RUNTIME_ENV == "prod" and value != "ecs_ram_role":
+        raise RuntimeError("PROD OSS access must use an ECS RAM role")
+    return value
+
+
 @dataclass(frozen=True)
 class Settings:
     project_name: str = os.getenv("PROJECT_NAME", "LEHUE")
@@ -98,8 +107,12 @@ class Settings:
     oss_bucket: str = os.getenv("OSS_BUCKET", "").strip()
     oss_region: str = os.getenv("OSS_REGION", "").strip()
     oss_endpoint: str = os.getenv("OSS_ENDPOINT", "").strip()
+    oss_public_endpoint: str = os.getenv("OSS_PUBLIC_ENDPOINT", "").strip()
+    oss_credential_mode: str = _oss_credential_mode()
+    oss_role_name: str = os.getenv("OSS_ROLE_NAME", "").strip()
     oss_access_key_id: str = os.getenv("OSS_ACCESS_KEY_ID", "").strip()
     oss_access_key_secret: str = os.getenv("OSS_ACCESS_KEY_SECRET", "").strip()
+    oss_upload_url_seconds: int = _int("OSS_UPLOAD_URL_SECONDS", 900)
     backup_oss_bucket: str = os.getenv("BACKUP_OSS_BUCKET", "").strip()
     backup_oss_prefix: str = os.getenv("BACKUP_OSS_PREFIX", "lehue-backups").strip().strip("/")
     load_test_seed: bool = _bool("LOAD_TEST_SEED", True)
@@ -127,8 +140,8 @@ class Settings:
             return
         if not self.oss_bucket or not (self.oss_region or self.oss_endpoint):
             raise RuntimeError("OSS Lighting storage requires OSS_BUCKET and OSS_REGION or OSS_ENDPOINT")
-        if not self.oss_access_key_id or not self.oss_access_key_secret:
-            raise RuntimeError("OSS Lighting storage requires OSS_ACCESS_KEY_ID and OSS_ACCESS_KEY_SECRET")
+        if self.oss_credential_mode == "access_key" and (not self.oss_access_key_id or not self.oss_access_key_secret):
+            raise RuntimeError("OSS access_key mode requires OSS_ACCESS_KEY_ID and OSS_ACCESS_KEY_SECRET")
 
 
 settings = Settings()

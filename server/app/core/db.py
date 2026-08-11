@@ -137,6 +137,7 @@ CREATE TABLE IF NOT EXISTS lighting_files (
     melanopic_median REAL,
     melanopic_max REAL,
     parse_error TEXT NOT NULL DEFAULT '',
+    upload_status TEXT NOT NULL DEFAULT 'qc',
     FOREIGN KEY(participant_id) REFERENCES study_subjects(participant_id) ON DELETE CASCADE,
     UNIQUE(participant_id, date_local, sha256)
 );
@@ -207,6 +208,7 @@ SUBJECT_COLUMNS = {
 LIGHTING_COLUMNS = {
     "storage_backend": "TEXT NOT NULL DEFAULT 'local'",
     "object_key": "TEXT NOT NULL DEFAULT ''",
+    "upload_status": "TEXT NOT NULL DEFAULT 'qc'",
 }
 
 QUESTIONNAIRE_COLUMNS = {

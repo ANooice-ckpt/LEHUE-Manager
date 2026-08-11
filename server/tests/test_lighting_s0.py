@@ -1,4 +1,5 @@
 import importlib
+import hashlib
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -115,6 +116,72 @@ def test_lighting_upload_and_daily_qc(monkeypatch):
         assert today_row["status"] == "pending"
         with dbmod.db() as conn:
             assert conn.execute("SELECT valid_days FROM study_subjects WHERE participant_id='001'").fetchone()["valid_days"] == 1
+
+
+def test_oss_direct_upload_can_resume_and_finish_qc(monkeypatch):
+    monkeypatch.setenv("LIGHT_STORAGE_BACKEND", "oss")
+    monkeypatch.setenv("OSS_BUCKET", "test-lighting")
+    monkeypatch.setenv("OSS_REGION", "cn-hongkong")
+    monkeypatch.setenv("OSS_CREDENTIAL_MODE", "access_key")
+    monkeypatch.setenv("OSS_ACCESS_KEY_ID", "test-id")
+    monkeypatch.setenv("OSS_ACCESS_KEY_SECRET", "test-secret")
+    with tempfile.TemporaryDirectory() as td:
+        dbmod, _, light, _, _, _ = _reload(monkeypatch, td)
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+        with dbmod.db() as conn:
+            conn.execute(
+                "INSERT INTO study_subjects(participant_id,status,start_date,end_date,created_at_utc,updated_at_utc) VALUES(?,?,?,?,?,?)",
+                ("001", "running", today.isoformat(), today.isoformat(), now, now),
+            )
+
+        raw = _valid_light_csv()
+        digest = hashlib.sha256(raw).hexdigest()
+
+        class FakeOSS:
+            backend = "oss"
+
+            def __init__(self):
+                self.data = None
+                self.key = ""
+                self.digest = ""
+
+            def exists(self, object_key):
+                return self.data is not None and object_key == self.key
+
+            def head(self, object_key):
+                from app.modules.light.storage import LightObjectHead
+                return LightObjectHead(len(self.data), self.digest)
+
+            def presign_put(self, object_key, sha256, expires_seconds):
+                self.key, self.digest = object_key, sha256
+                return {"url": "https://upload.example.test/signed", "headers": {"x-oss-meta-sha256": sha256}}
+
+            def download_to_temp(self, object_key):
+                handle = tempfile.NamedTemporaryFile(suffix=".csv", delete=False)
+                try:
+                    handle.write(self.data)
+                    return Path(handle.name)
+                finally:
+                    handle.close()
+
+        storage = FakeOSS()
+        monkeypatch.setattr(light, "get_light_storage", lambda: storage)
+        filename = f"001_{today.strftime('%Y%m%d')}_LIGHT.csv"
+        first = light.prepare_direct_upload("001", today.isoformat(), filename, len(raw), digest)
+        assert first["status"] == "pending"
+        resumed = light.prepare_direct_upload("001", today.isoformat(), filename, len(raw), digest)
+        assert resumed["upload_uid"] == first["upload_uid"]
+        storage.data = raw
+        uploaded = light.prepare_direct_upload("001", today.isoformat(), filename, len(raw), digest)
+        assert uploaded["status"] == "uploaded"
+        finished = light.complete_direct_upload("001", first["upload_uid"])
+        assert finished["quality"] == "valid"
+        assert finished["upload_status"] == "qc"
+        with dbmod.db() as conn:
+            assert conn.execute(
+                "SELECT upload_status FROM lighting_files WHERE upload_uid=?", (first["upload_uid"],)
+            ).fetchone()["upload_status"] == "qc"
 
 
 def test_s0_snapshot_import_preserves_candidate_identity(monkeypatch):

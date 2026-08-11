@@ -7,11 +7,13 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from app.core import config
+from app.core.oss_client import oss_bucket
 
 
 @dataclass(frozen=True)
 class LightObjectHead:
     size_bytes: int
+    sha256: str = ""
 
 
 def _safe_key(object_key: str) -> str:
@@ -67,17 +69,9 @@ class LocalLightStorage:
 class OSSLightStorage:
     backend = "oss"
 
-    def __init__(self, bucket_name: str, endpoint: str, access_key_id: str, access_key_secret: str):
-        if not all((bucket_name, endpoint, access_key_id, access_key_secret)):
-            raise RuntimeError(
-                "OSS Lighting storage requires OSS_BUCKET, OSS_REGION or OSS_ENDPOINT, "
-                "OSS_ACCESS_KEY_ID and OSS_ACCESS_KEY_SECRET"
-            )
-        try:
-            import oss2
-        except ImportError as exc:
-            raise RuntimeError("OSS Lighting storage requires the oss2 package") from exc
-        self.bucket = oss2.Bucket(oss2.Auth(access_key_id, access_key_secret), endpoint, bucket_name)
+    def __init__(self, bucket_name: str):
+        self.bucket = oss_bucket(bucket_name)
+        self.public_bucket = oss_bucket(bucket_name, public=True)
 
     def save(self, source_path: Path, object_key: str) -> LightObjectHead:
         key = _safe_key(object_key)
@@ -99,7 +93,18 @@ class OSSLightStorage:
 
     def head(self, object_key: str) -> LightObjectHead:
         result = self.bucket.head_object(_safe_key(object_key))
-        return LightObjectHead(size_bytes=int(result.content_length))
+        return LightObjectHead(
+            size_bytes=int(result.content_length),
+            sha256=str(result.headers.get("x-oss-meta-sha256") or "").lower(),
+        )
+
+    def presign_put(self, object_key: str, sha256: str, expires_seconds: int) -> dict:
+        key = _safe_key(object_key)
+        headers = {"x-oss-meta-sha256": sha256}
+        return {
+            "url": self.public_bucket.sign_url("PUT", key, expires_seconds, headers=headers, slash_safe=True),
+            "headers": headers,
+        }
 
     def delete(self, object_key: str) -> None:
         self.bucket.delete_object(_safe_key(object_key))
@@ -109,10 +114,4 @@ def get_light_storage():
     settings = config.settings
     if settings.light_storage_backend == "local":
         return LocalLightStorage(settings.data_dir)
-    endpoint = settings.oss_endpoint or (f"https://oss-{settings.oss_region}.aliyuncs.com" if settings.oss_region else "")
-    return OSSLightStorage(
-        settings.oss_bucket,
-        endpoint,
-        settings.oss_access_key_id,
-        settings.oss_access_key_secret,
-    )
+    return OSSLightStorage(settings.oss_bucket)

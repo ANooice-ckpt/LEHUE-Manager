@@ -1,4 +1,5 @@
 import os
+import hashlib
 import uuid
 
 import pytest
@@ -29,20 +30,19 @@ def test_local_light_storage_round_trip(tmp_path):
 
 @pytest.mark.skipif(os.getenv("RUN_OSS_INTEGRATION") != "1", reason="real OSS integration is opt-in")
 def test_real_oss_round_trip(tmp_path):
-    endpoint = os.getenv("OSS_ENDPOINT") or f"https://oss-{os.environ['OSS_REGION']}.aliyuncs.com"
-    storage = OSSLightStorage(
-        os.environ["OSS_BUCKET"],
-        endpoint,
-        os.environ["OSS_ACCESS_KEY_ID"],
-        os.environ["OSS_ACCESS_KEY_SECRET"],
-    )
+    storage = OSSLightStorage(os.environ["OSS_BUCKET"])
     source = tmp_path / "source.csv"
     source.write_bytes(b"LEHUE OSS integration test\n")
     key = f"integration-test/lighting/{uuid.uuid4().hex}.csv"
     try:
-        storage.save(source, key)
+        import requests
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        signed = storage.presign_put(key, digest, 300)
+        response = requests.put(signed["url"], data=source.read_bytes(), headers=signed["headers"], timeout=30)
+        response.raise_for_status()
         assert storage.exists(key)
         assert storage.head(key).size_bytes == source.stat().st_size
+        assert storage.head(key).sha256 == digest
         downloaded = storage.download_to_temp(key)
         try:
             assert downloaded.read_bytes() == source.read_bytes()

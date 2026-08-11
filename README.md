@@ -86,7 +86,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 ## Lighting raw storage：本地与 OSS
 
-Lighting 的 HTTP 接口保持不变，但原始文件通过 `light/storage.py` 保存。上传请求会先流式写入操作系统临时文件，避免把约 40 MB 的 raw 一次性保存在 Python `bytes` 中；canonical object 保存成功后，首次 QC 直接解析这份上传临时文件，不再从 OSS 下载同一文件。人工重新 QC 时才从 storage 读取 canonical raw。QC 结果写入 `lighting_files`，Daily QC 只查询 SQLite 中已经保存的字段。
+Lighting 原始文件通过 `light/storage.py` 保存。本地 local 模式仍由 FastAPI 流式写入临时文件，canonical 保存成功后首次 QC 直接解析该临时文件；OSS 模式则由浏览器使用短期签名 URL 直传，ECS 只为 QC 下载临时副本。人工重新 QC 同样从 storage 读取 canonical raw。QC 结果写入 `lighting_files`，Daily QC 只查询 SQLite 中已经保存的字段。
 
 对象键固定为：
 
@@ -114,15 +114,20 @@ $env:LEHUE_ENV = "test"
 $env:LIGHT_STORAGE_BACKEND = "oss"
 $env:OSS_BUCKET = "<TEST bucket>"
 $env:OSS_REGION = "cn-hongkong"
+$env:OSS_CREDENTIAL_MODE = "access_key"
 $env:OSS_ACCESS_KEY_ID = "<secret>"
 $env:OSS_ACCESS_KEY_SECRET = "<secret>"
 $env:RUN_OSS_INTEGRATION = "1"
 server\.venv\Scripts\python.exe -m pytest server\tests\test_light_storage.py -q
 ```
 
-`OSS_ENDPOINT` 可选；不设置时由 `OSS_REGION` 生成公网 endpoint。ECS 若使用内网 endpoint，应显式设置 `OSS_ENDPOINT`。AccessKey 只放在服务器 `.env` 或部署平台的 secret store，不写入代码或 Git。
+`OSS_ENDPOINT` 可选，供 ECS 下载 QC 使用内网地址；浏览器直传使用 `OSS_PUBLIC_ENDPOINT`，不设置时由 `OSS_REGION` 生成公网地址。本地 AK/SK 仅用于显式 OSS 集成测试，不写入代码或 Git。
 
-PROD 默认选择并强制要求 `LIGHT_STORAGE_BACKEND=oss`。TEST 与 PROD 必须使用不同的 bucket、RAM 凭据和 SQLite 数据目录；PROD 凭据不要授予 TEST bucket 权限。
+云端 TEST / PROD 设置 `OSS_CREDENTIAL_MODE=ecs_ram_role`，ECS 绑定 RAM Role 后无需配置 AK/SK；PROD 会拒绝 `access_key` 模式。Lighting 与自动备份共用同一个自动刷新临时凭据 provider。TEST 与 PROD 必须使用不同 bucket、RAM 权限和 SQLite 数据目录。
+
+OSS 模式下 Participant Portal 先登记 `pending` 并取得约 15 分钟有效、只允许写入指定 object key 的 PUT URL；浏览器直接上传 OSS，FastAPI 不接收 40 MB 文件。OSS 到件后记录变为 `uploaded`，ECS 临时下载、校验 size/SHA256 并执行现有 QC，成功后状态为 `qc`。中断后重新选择同一文件会复用原 `upload_uid` 继续处理。本地 `test + local` 仍走原上传接口。
+
+直传 bucket 需配置 CORS：允许 Participant Portal 的 HTTPS Origin、`PUT` 方法和 `x-oss-meta-sha256` 请求头。不要使用 `*` Origin 承载正式实验。
 
 ## OwnTracks 冻结参数与 Acquisition QC
 
@@ -134,7 +139,7 @@ PROD 默认选择并强制要求 `LIGHT_STORAGE_BACKEND=oss`。TEST 与 PROD 必
 
 `server/scripts/backup_to_oss.py` 使用 SQLite 在线备份 API生成两个数据库的一致副本，并将 GPS raw JSONL 一起压缩后上传到独立私有 OSS bucket。Lighting canonical raw 已在 OSS，不重复复制。对象键自动包含 `test` 或 `prod`，两套运行环境仍应使用不同 bucket 或至少不同 RAM 权限。
 
-配置 `BACKUP_OSS_BUCKET`、`BACKUP_OSS_PREFIX` 以及现有 OSS endpoint/AccessKey 后，可先手工验证：
+配置 `BACKUP_OSS_BUCKET`、`BACKUP_OSS_PREFIX` 后，备份脚本使用同一个 RAM Role credential provider，可先手工验证：
 
 ```bash
 LEHUE_ENV=test docker compose exec -T api python scripts/backup_to_oss.py

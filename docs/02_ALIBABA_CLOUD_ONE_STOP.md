@@ -164,6 +164,23 @@ docker compose up -d --build
 
 ## M. 最低限度备份
 
+云端 TEST / PROD 的 ECS 应先绑定一个最小权限 RAM Role，并设置：
+
+```dotenv
+LIGHT_STORAGE_BACKEND=oss
+OSS_CREDENTIAL_MODE=ecs_ram_role
+OSS_ROLE_NAME=lehue-test-ecs
+OSS_BUCKET=lehue-lighting-test
+OSS_REGION=cn-hongkong
+# ECS 做 QC 可用内网 endpoint；浏览器必须使用公网 endpoint。
+OSS_ENDPOINT=https://oss-cn-hongkong-internal.aliyuncs.com
+OSS_PUBLIC_ENDPOINT=https://oss-cn-hongkong.aliyuncs.com
+```
+
+不要在 PROD `.env` 配置长期 `OSS_ACCESS_KEY_ID` / `OSS_ACCESS_KEY_SECRET`。RAM Role 至少需要 Lighting 前缀的 Put/Get/Head/Delete 权限，以及备份 bucket 前缀的 Put 权限；TEST 与 PROD 使用不同 role 和 bucket。
+
+Participant Portal 使用限定 object key、短时有效的签名 PUT URL。Lighting bucket 的 CORS 只允许正式 Portal Origin、`PUT` 和 `x-oss-meta-sha256`，例如允许来源 `https://gps.example.com`；修改域名后同步更新 CORS。上传状态保存在 SQLite：`pending` 可继续上传、`uploaded` 可重新触发 QC、`qc` 表示 acquisition QC 已落库。
+
 配置独立私有备份桶（不要使用公开读写权限）：
 
 ```dotenv
