@@ -1,6 +1,7 @@
 import importlib
 import io
 import base64
+import shutil
 import tempfile
 import zipfile
 
@@ -98,6 +99,7 @@ def test_web_admin_flow(monkeypatch):
             assert edited_subject.status_code == 200
             subject = next(x for x in client.get('/api/v1/web/subjects').json() if x['participant_id'] == '001')
             assert subject['batch_id'] == 'B2' and subject['end_date'] == '2026-09-15'
+            assert 'study_day' in subject
             track = client.get('/api/v1/web/subjects/001/gps-track?hours=12')
             assert track.status_code == 200
             assert track.json()['total_point_count'] == 0
@@ -107,6 +109,8 @@ def test_web_admin_flow(monkeypatch):
                 content=b'Photopic Lux,Melanopic,Is Saturate\n100,80,No\n', headers=h,
             )
             assert light.status_code == 200 and light.json()['quality'] == 'insufficient'
+            rerun = client.post(f"/api/v1/web/lighting/{light.json()['upload_uid']}/qc", json={}, headers=h)
+            assert rerun.status_code == 200 and rerun.json()['quality'] == 'insufficient'
             assert len(client.get('/api/v1/web/lighting').json()) == 1
             assert client.get('/api/v1/web/daily-qc').status_code == 200
             assert client.post('/api/v1/web/incidents', json={'participant_id':'001','date_local':'2026-09-02','source':'GPS','incident_type':'offline','summary':'GPS offline'}, headers=h).status_code == 200
@@ -133,6 +137,18 @@ def test_web_admin_flow(monkeypatch):
             assert backup.status_code == 200
             with zipfile.ZipFile(io.BytesIO(backup.content)) as zf:
                 assert {'lehue.sqlite3', 'lehue_identity.sqlite3', 'manifest.json'} <= set(zf.namelist())
+
+            raw_path = config.settings.raw_archive_dir / '2026-08-11.jsonl'
+            raw_path.parent.mkdir(parents=True, exist_ok=True)
+            raw_path.write_text('{"_type":"location"}\n', encoding='utf-8')
+            import app.modules.admin.backup as backup_service
+            importlib.reload(backup_service)
+            archive_text, temp_dir_text = backup_service.create_system_backup(include_gps_raw=True)
+            try:
+                with zipfile.ZipFile(archive_text) as zf:
+                    assert 'gps_raw/2026-08-11.jsonl' in zf.namelist()
+            finally:
+                shutil.rmtree(temp_dir_text)
 
             client.post('/api/v1/web/logout', json={}, headers=h)
             r = client.post('/api/v1/web/login', json={'username':'ra01','password':ra_password})

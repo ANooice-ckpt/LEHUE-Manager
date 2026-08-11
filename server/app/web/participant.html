@@ -32,7 +32,7 @@
 const token=decodeURIComponent(location.pathname.split('/').pop()||'');let state=null,currentForm=null;
 const $=id=>document.getElementById(id);const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function api(url,opts={}){const r=await fetch(url,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})}});let data={};try{data=await r.json()}catch{}if(!r.ok)throw new Error(data.detail||`HTTP ${r.status}`);return data}
-function gpsText(g){if(g.status==='live')return ['GPS记录','正在回传','done'];if(g.status==='stale')return ['GPS记录','最近回传较久，请确认 OwnTracks 正常',''];if(g.status==='offline')return ['GPS记录','较长时间未收到回传，请检查手机记录',''];return ['GPS记录','尚未收到 GPS 回传','']}
+function gpsText(g){if(g.status==='live')return ['GPS记录','正在回传','done'];if(g.status==='backfilling')return ['GPS记录','正在补传断网期间的记录','done'];if(g.status==='stale')return ['GPS记录','最近回传较久，请确认 OwnTracks 正常',''];if(g.status==='offline')return ['GPS记录','较长时间未收到回传，请检查手机记录',''];return ['GPS记录','尚未收到 GPS 回传','']}
 function showHome(){currentForm=null;$('formView').classList.add('hidden');$('lightView').classList.add('hidden');$('home').classList.remove('hidden')}
 function shiftDate(iso,days){const [y,m,d]=iso.split('-').map(Number),value=new Date(Date.UTC(y,m-1,d));value.setUTCDate(value.getUTCDate()+days);return value.toISOString().slice(0,10)}
 function daysBetween(a,b){return Math.round((Date.parse(`${b}T00:00:00Z`)-Date.parse(`${a}T00:00:00Z`))/86400000)}

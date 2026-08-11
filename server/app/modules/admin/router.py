@@ -308,6 +308,14 @@ async def lighting_upload(participant_id: str, date_local: str, filename: str, r
             path.unlink(missing_ok=True)
 
 
+@router.post("/api/v1/web/lighting/{upload_uid}/qc")
+def lighting_rerun_qc(upload_uid: str, operator=Depends(require_operator_write)):
+    try:
+        return service.rerun_lighting_qc(upload_uid, operator.username)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @router.get("/api/v1/web/subjects/{participant_id}/credentials")
 def participant_credentials(participant_id: str, operator=Depends(require_operator)):
     try:

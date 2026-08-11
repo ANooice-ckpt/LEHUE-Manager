@@ -10,10 +10,14 @@ def _reload(monkeypatch, td: str):
     monkeypatch.setenv("STUDY_TIMEZONE", "Asia/Shanghai")
     monkeypatch.setenv("QUESTIONNAIRE_EVENING_CUTOFF_HOUR", "0")
     monkeypatch.setenv("QC_DAY_CLOSE_HOUR", "0")
+    monkeypatch.setenv("GPS_DAILY_MIN_POINTS", "1")
+    monkeypatch.setenv("GPS_DAILY_EDGE_COVERAGE_HOURS", "24")
+    monkeypatch.setenv("GPS_DAILY_MAX_GAP_SECONDS", "86400")
 
     import app.core.config as config; importlib.reload(config)
     import app.core.db as dbmod; importlib.reload(dbmod)
     import app.core.identity_db as idb; importlib.reload(idb)
+    import app.modules.gps.service as gps; importlib.reload(gps)
     import app.modules.light.service as light; importlib.reload(light)
     import app.modules.questionnaire.s0_import as s0; importlib.reload(s0)
     import app.modules.participant.service as portal; importlib.reload(portal)
@@ -69,7 +73,19 @@ def test_lighting_upload_and_daily_qc(monkeypatch):
         assert parsed["records_valid"] == 6480
         assert parsed["valid_pct"] == 90.0
         assert parsed["quality"] == "valid"
-        light.store_upload("001", yesterday.isoformat(), f"001_{yesterday.strftime('%Y%m%d')}_LIGHT.csv", raw, "test")
+        import app.modules.light.storage as light_storage
+        download_calls = []
+        original_download = light_storage.LocalLightStorage.download_to_temp
+
+        def counted_download(self, object_key):
+            download_calls.append(object_key)
+            return original_download(self, object_key)
+
+        monkeypatch.setattr(light_storage.LocalLightStorage, "download_to_temp", counted_download)
+        first = light.store_upload("001", yesterday.isoformat(), f"001_{yesterday.strftime('%Y%m%d')}_LIGHT.csv", raw, "test")
+        assert download_calls == []
+        assert light.rerun_qc(first["upload_uid"])["quality"] == "valid"
+        assert len(download_calls) == 1
         with dbmod.db() as conn:
             stored = dict(conn.execute("SELECT * FROM lighting_files WHERE date_local=?", (yesterday.isoformat(),)).fetchone())
         assert stored["storage_backend"] == "local"

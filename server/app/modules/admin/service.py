@@ -155,19 +155,36 @@ def update_candidate(candidate_uid: str, data: dict[str, Any], operator: str):
 
 def list_subjects():
     today = local_today()
+    today_date = date.fromisoformat(today)
     with db() as conn:
         rows = [dict(r) for r in conn.execute("SELECT * FROM study_subjects ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'scheduled' THEN 1 ELSE 2 END, participant_id")]
         counts = _questionnaire_counts(conn, [r["participant_id"] for r in rows])
         gps_last = {
-            r["participant_id"]: r["last_received_at_utc"]
+            r["participant_id"]: r
             for r in conn.execute(
-                "SELECT participant_id,MAX(received_at_utc) last_received_at_utc FROM gps_locations GROUP BY participant_id"
+                """SELECT g.participant_id,g.recorded_at_utc,g.received_at_utc
+                   FROM gps_locations g
+                   JOIN (SELECT participant_id,MAX(received_at_utc) received_at_utc
+                         FROM gps_locations GROUP BY participant_id) latest
+                     ON latest.participant_id=g.participant_id AND latest.received_at_utc=g.received_at_utc"""
             )
         }
         for row in rows:
-            gps = gps_service.online_state(gps_last.get(row["participant_id"]))
+            last = gps_last.get(row["participant_id"])
+            gps = gps_service.online_state(
+                last["received_at_utc"] if last else None,
+                last["recorded_at_utc"] if last else None,
+            )
             row["gps_status"] = gps["status"]
             row["gps_last_received_at_utc"] = gps["last_received_at_utc"]
+            row["gps_delivery_delay_seconds"] = gps["delivery_delay_seconds"]
+            row["study_day"] = None
+            if row["status"] == "running" and row["start_date"]:
+                try:
+                    study_day = (today_date - date.fromisoformat(row["start_date"])).days + 1
+                    row["study_day"] = study_day if study_day >= 1 else None
+                except ValueError:
+                    pass
             row["questionnaire_today_completed"] = counts.get(row["participant_id"], 0)
             row["lighting_today"] = light_service.portal_light_state(row["participant_id"], today)
             row["portal_enabled"] = bool(row.get("portal_token_id"))
@@ -374,6 +391,12 @@ def list_lighting_uploads(participant_id: str = "", date_local: str = ""):
 def upload_lighting_path(participant_id: str, date_local: str, filename: str, path: Path, operator: str):
     result = light_service.store_upload_path(participant_id, date_local, filename, path, f"admin:{operator}")
     audit(operator, "lighting.upload", "lighting_file", result["upload_uid"], {"participant_id": participant_id, "date_local": date_local, "quality": result["quality"]})
+    return result
+
+
+def rerun_lighting_qc(upload_uid: str, operator: str):
+    result = light_service.rerun_qc(upload_uid)
+    audit(operator, "lighting.qc.rerun", "lighting_file", upload_uid, {"quality": result["quality"]})
     return result
 
 

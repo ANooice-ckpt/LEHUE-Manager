@@ -7,6 +7,7 @@ import json
 import os
 import sqlite3
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from statistics import median
@@ -17,6 +18,9 @@ from app.core.db import db
 from app.core.security import verify_secret
 
 _archive_lock = threading.Lock()
+_auth_cache_lock = threading.Lock()
+_auth_cache: dict[tuple[str, str, str], float] = {}
+TARGET_SAMPLE_SECONDS = 10
 
 
 def utc_now() -> datetime:
@@ -58,7 +62,19 @@ def authenticate_participant(participant_id: str, secret: str) -> bool:
         ).fetchone()
     if not row or not row["is_active"]:
         return False
-    return verify_secret(secret, row["secret_salt"], row["secret_hash"])
+    now = time.monotonic()
+    secret_fingerprint = hashlib.sha256(secret.encode("utf-8")).hexdigest()
+    cache_key = (participant_id, row["secret_hash"], secret_fingerprint)
+    with _auth_cache_lock:
+        if _auth_cache.get(cache_key, 0) > now:
+            return True
+    valid = verify_secret(secret, row["secret_salt"], row["secret_hash"])
+    if valid and settings.gps_auth_cache_seconds > 0:
+        with _auth_cache_lock:
+            if len(_auth_cache) >= 2048:
+                _auth_cache.clear()
+            _auth_cache[cache_key] = now + settings.gps_auth_cache_seconds
+    return valid
 
 
 def _append_raw_archive(record: dict[str, Any], received: datetime) -> bool:
@@ -187,26 +203,96 @@ def participant_exists(participant_id: str) -> bool:
     return row is not None
 
 
-def online_state(last_received_at_utc: str | None, now: datetime | None = None) -> dict[str, Any]:
+def online_state(
+    last_received_at_utc: str | None,
+    last_recorded_at_utc: str | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
     if not last_received_at_utc:
-        return {"status": "never", "last_received_at_utc": None, "seconds_since_last": None}
+        return {
+            "status": "never", "last_received_at_utc": None, "last_recorded_at_utc": None,
+            "seconds_since_last": None, "delivery_delay_seconds": None,
+        }
     try:
-        parsed = datetime.fromisoformat(last_received_at_utc.replace("Z", "+00:00"))
-        age = max(0, int(((now or utc_now()) - parsed).total_seconds()))
+        received = datetime.fromisoformat(last_received_at_utc.replace("Z", "+00:00"))
+        age = max(0, int(((now or utc_now()) - received).total_seconds()))
     except ValueError:
         age = None
+        received = None
+    try:
+        recorded = datetime.fromisoformat(last_recorded_at_utc.replace("Z", "+00:00")) if last_recorded_at_utc else None
+    except ValueError:
+        recorded = None
+    delivery_delay = max(0, int((received - recorded).total_seconds())) if received and recorded else None
     if age is None:
         status = "unknown"
+    elif age <= 600 and delivery_delay is not None and delivery_delay >= settings.gps_backfill_delay_seconds:
+        status = "backfilling"
     elif age <= 600:
         status = "live"
     elif age <= 3600:
         status = "stale"
     else:
         status = "offline"
-    return {"status": status, "last_received_at_utc": last_received_at_utc, "seconds_since_last": age}
+    return {
+        "status": status,
+        "last_received_at_utc": last_received_at_utc,
+        "last_recorded_at_utc": last_recorded_at_utc,
+        "seconds_since_last": age,
+        "delivery_delay_seconds": delivery_delay,
+    }
 
 
-TRACK_SAMPLE_SECONDS = {1: 10, 12: 30, 24: 50}
+TRACK_SAMPLE_SECONDS = {1: TARGET_SAMPLE_SECONDS, 12: 30, 24: 50}
+
+
+def daily_acquisition_summary(participant_id: str, start_utc: str, end_utc: str) -> dict[str, Any]:
+    count = 0
+    first: datetime | None = None
+    last: datetime | None = None
+    previous: datetime | None = None
+    max_gap = 0.0
+    with db() as conn:
+        rows = conn.execute(
+            """SELECT recorded_at_utc FROM gps_locations
+               WHERE participant_id=? AND recorded_at_utc>=? AND recorded_at_utc<?
+               ORDER BY recorded_at_utc""",
+            (participant_id, start_utc, end_utc),
+        )
+        for row in rows:
+            recorded = datetime.fromisoformat(row["recorded_at_utc"].replace("Z", "+00:00"))
+            count += 1
+            first = first or recorded
+            if previous is not None:
+                max_gap = max(max_gap, (recorded - previous).total_seconds())
+            previous = last = recorded
+    start = datetime.fromisoformat(start_utc.replace("Z", "+00:00"))
+    end = datetime.fromisoformat(end_utc.replace("Z", "+00:00"))
+    first_delay = (first - start).total_seconds() if first else None
+    last_shortfall = (end - last).total_seconds() if last else None
+    edge_limit = settings.gps_daily_edge_coverage_hours * 3600
+    issues = []
+    if count == 0:
+        issues.append("no_points")
+    else:
+        if count < settings.gps_daily_min_points:
+            issues.append("low_point_count")
+        if first_delay is not None and first_delay > edge_limit:
+            issues.append("late_first_point")
+        if last_shortfall is not None and last_shortfall > edge_limit:
+            issues.append("early_last_point")
+        if max_gap > settings.gps_daily_max_gap_seconds:
+            issues.append("long_gap")
+    return {
+        "complete": not issues,
+        "point_count": count,
+        "first_recorded_at_utc": iso_utc(first),
+        "last_recorded_at_utc": iso_utc(last),
+        "first_delay_seconds": round(first_delay, 1) if first_delay is not None else None,
+        "last_shortfall_seconds": round(last_shortfall, 1) if last_shortfall is not None else None,
+        "max_gap_seconds": round(max_gap, 1),
+        "issues": issues,
+    }
 
 
 def track_diagnostic(participant_id: str, hours: int, now: datetime | None = None) -> dict[str, Any]:

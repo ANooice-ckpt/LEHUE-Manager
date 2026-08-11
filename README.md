@@ -82,11 +82,11 @@ Set-ExecutionPolicy -Scope Process Bypass
 - `/p/<token>` 的 token 本身就是被试端身份凭据：不可猜测、数据库仅存 hash，但收到链接的人可以代表该被试访问工作入口，因此不要转发或公开。
 - 公网部署只暴露 Caddy 80/443；FastAPI 8000 不直接开放。
 - `/health` 不返回 participant ID、身份信息、坐标或问卷答案。
-- 当前仍是工程测试版本；正式被试前还需补登录/portal 限速、定时异地备份、恢复演练及隐私流程。
+- 当前仍是工程测试版本；正式被试前还需冻结登录/portal 限速策略，启用并验证定时异地备份，完成恢复演练及隐私流程。
 
 ## Lighting raw storage：本地与 OSS
 
-Lighting 的 HTTP 接口保持不变，但原始文件通过 `light/storage.py` 保存。上传请求会先流式写入操作系统临时文件，避免把约 40 MB 的 raw 一次性保存在 Python `bytes` 中；canonical object 保存成功后，系统下载临时副本执行现有 parser/QC，结果写入 `lighting_files`，随后删除临时副本。Daily QC 只查询 SQLite 中已经保存的 QC 字段。
+Lighting 的 HTTP 接口保持不变，但原始文件通过 `light/storage.py` 保存。上传请求会先流式写入操作系统临时文件，避免把约 40 MB 的 raw 一次性保存在 Python `bytes` 中；canonical object 保存成功后，首次 QC 直接解析这份上传临时文件，不再从 OSS 下载同一文件。人工重新 QC 时才从 storage 读取 canonical raw。QC 结果写入 `lighting_files`，Daily QC 只查询 SQLite 中已经保存的字段。
 
 对象键固定为：
 
@@ -123,6 +123,24 @@ server\.venv\Scripts\python.exe -m pytest server\tests\test_light_storage.py -q
 `OSS_ENDPOINT` 可选；不设置时由 `OSS_REGION` 生成公网 endpoint。ECS 若使用内网 endpoint，应显式设置 `OSS_ENDPOINT`。AccessKey 只放在服务器 `.env` 或部署平台的 secret store，不写入代码或 Git。
 
 PROD 默认选择并强制要求 `LIGHT_STORAGE_BACKEND=oss`。TEST 与 PROD 必须使用不同的 bucket、RAM 凭据和 SQLite 数据目录；PROD 凭据不要授予 TEST bucket 权限。
+
+## OwnTracks 冻结参数与 Acquisition QC
+
+统一使用 OwnTracks **Move** 模式，目标采样间隔约 10 秒：Android 设置 Move 10 s；iOS 设置 `locatorInterval=10`、`locatorDisplacement=10`、`adapt=0`、`downgrade=0`。这是目标设置，不要求数据严格每 10 秒一个点；OS 后台调度、卫星定位条件、网络中断和恢复补传都会改变实际间隔。
+
+高频 HTTP 鉴权仍使用随机 GPS credential 和数据库中的 PBKDF2 hash。进程只短时缓存已验证的“被试 + 当前 hash + 密码指纹”，默认 300 秒；重置凭据会改变数据库 hash，因此旧缓存立即失效。运行状态在近期收到旧记录时显示“补传中”。Daily GPS QC 只看点数、自然日首末覆盖和明显长断档，不计算轨迹距离或行为指标；阈值可用 `.env.example` 中的 `GPS_DAILY_*` 调整。
+
+## 定时异地备份
+
+`server/scripts/backup_to_oss.py` 使用 SQLite 在线备份 API生成两个数据库的一致副本，并将 GPS raw JSONL 一起压缩后上传到独立私有 OSS bucket。Lighting canonical raw 已在 OSS，不重复复制。对象键自动包含 `test` 或 `prod`，两套运行环境仍应使用不同 bucket 或至少不同 RAM 权限。
+
+配置 `BACKUP_OSS_BUCKET`、`BACKUP_OSS_PREFIX` 以及现有 OSS endpoint/AccessKey 后，可先手工验证：
+
+```bash
+LEHUE_ENV=test docker compose exec -T api python scripts/backup_to_oss.py
+```
+
+再由服务器 cron 定期运行 `bash /opt/LEHUE-Manager/scripts/server_backup.sh`。备份桶必须私有，并定期做恢复演练。
 
 ## Admin GPS 轨迹诊断
 

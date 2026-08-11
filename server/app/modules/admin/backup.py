@@ -22,7 +22,7 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def create_system_backup() -> tuple[str, str]:
+def create_system_backup(*, include_gps_raw: bool = False) -> tuple[str, str]:
     temp_dir = Path(tempfile.mkdtemp(prefix="lehue_backup_"))
     main_copy = temp_dir / "lehue.sqlite3"
     identity_copy = temp_dir / "lehue_identity.sqlite3"
@@ -62,13 +62,20 @@ def create_system_backup() -> tuple[str, str]:
         })
 
     generated = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    gps_files = sorted(settings.raw_archive_dir.rglob("*.jsonl")) if include_gps_raw and settings.raw_archive_dir.exists() else []
+    contents = ["lehue.sqlite3", "lehue_identity.sqlite3"]
+    if gps_files:
+        contents.append("gps_raw/")
+    excluded = ["web_sessions", "credential encryption key (.env)", "Lighting canonical raw"]
+    if not include_gps_raw:
+        excluded.append("GPS raw JSONL mirror")
     manifest = {
         "project": settings.project_name,
         "version": settings.app_version,
         "generated_at_utc": generated,
         "study_timezone": settings.study_timezone,
-        "contents": ["lehue.sqlite3", "lehue_identity.sqlite3"],
-        "excluded": ["web_sessions", "credential encryption key (.env)", "server/data/raw/gps JSONL mirror", "server/data/raw/lighting files"],
+        "contents": contents,
+        "excluded": excluded,
         "counts": counts,
         "sha256": {"lehue.sqlite3": _sha256(main_copy), "lehue_identity.sqlite3": _sha256(identity_copy)},
         "note": "Sensitive backup: contains identity/contact data, GPS records and questionnaire responses. Store securely.",
@@ -81,4 +88,6 @@ def create_system_backup() -> tuple[str, str]:
         zf.write(main_copy, arcname=main_copy.name)
         zf.write(identity_copy, arcname=identity_copy.name)
         zf.write(manifest_path, arcname=manifest_path.name)
+        for path in gps_files:
+            zf.write(path, arcname=(Path("gps_raw") / path.relative_to(settings.raw_archive_dir)).as_posix())
     return str(zip_path), str(temp_dir)

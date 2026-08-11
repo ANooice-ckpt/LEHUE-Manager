@@ -131,6 +131,11 @@ docker compose exec api python scripts/create_participant.py TEST01
 - URL: `https://gps.example.com/api/v1/gps/owntracks`
 - Username: TEST01
 - Password: 上一步生成的 password
+- Monitoring/定位模式：统一选择 **Move**
+- Android：Move interval 设为 `10 s`
+- iOS：`locatorInterval=10`、`locatorDisplacement=10`、`adapt=0`、`downgrade=0`
+
+10 秒是目标采样设置，不是逐点验收条件。系统后台调度、定位环境、网络和离线补传会令实际间隔变化；Admin 会把近期收到但记录时间明显较早的数据标为“补传中”。这些推荐值也显示在 Admin 被试凭据窗口旁，方便 RA 现场核对。
 
 手机产生位置以后，再访问：
 
@@ -159,7 +164,28 @@ docker compose up -d --build
 
 ## M. 最低限度备份
 
-测试阶段至少每天把 `/opt/LEHUE-Manager/server/data` 打包一次并复制到另一台设备。正式阶段再接 OSS/自动快照，不要把唯一副本留在 ECS/轻量服务器本地盘。
+配置独立私有备份桶（不要使用公开读写权限）：
+
+```dotenv
+BACKUP_OSS_BUCKET=lehue-private-backup-test
+BACKUP_OSS_PREFIX=lehue-backups
+```
+
+脚本会在线快照 `lehue.sqlite3`、`lehue_identity.sqlite3`，加入 GPS raw JSONL 后上传 OSS；Lighting raw 已是 canonical OSS object，不重复备份。先手工测试：
+
+```bash
+cd /opt/LEHUE-Manager
+export LEHUE_ENV=test
+docker compose exec -T api python scripts/backup_to_oss.py
+```
+
+确认 OSS 中出现对象并完成一次解压/SQLite 打开检查后，再加入 `crontab -e`（例如每天 03:20）：
+
+```cron
+20 3 * * * cd /opt/LEHUE-Manager && LEHUE_ENV=test bash scripts/server_backup.sh >> /var/log/lehue-backup.log 2>&1
+```
+
+PROD 将 `LEHUE_ENV` 改为 `prod`，并使用独立 bucket/RAM 权限。脚本对象键包含环境名，Lighting 不重复复制，失败会以非零状态退出供 cron 记录。
 
 
 ## N. v0.2.2 dependency policy

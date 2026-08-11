@@ -135,10 +135,14 @@ def form_time_scope(form_key: str, target: date) -> dict[str, str]:
 def _gps_state(participant_id: str) -> dict:
     with db() as conn:
         last = conn.execute(
-            "SELECT MAX(received_at_utc) AS x FROM gps_locations WHERE participant_id=?",
+            """SELECT recorded_at_utc,received_at_utc FROM gps_locations
+               WHERE participant_id=? ORDER BY received_at_utc DESC LIMIT 1""",
             (participant_id,),
-        ).fetchone()["x"]
-    return gps_service.online_state(last)
+        ).fetchone()
+    return gps_service.online_state(
+        last["received_at_utc"] if last else None,
+        last["recorded_at_utc"] if last else None,
+    )
 
 
 def portal_state(token: str) -> dict:

@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 
 from app.core.config import settings
 from app.core.db import db
+from app.modules.gps import service as gps_service
 from app.modules.light.storage import get_light_storage
 
 EXPECTED_SAMPLES = 7200
@@ -313,6 +314,19 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _parse_qc(filename: str, path: Path) -> dict:
+    try:
+        return parse_light_path(filename, path)
+    except Exception as exc:
+        return {
+            "records_expected": EXPECTED_SAMPLES, "records_total": 0, "records_valid": 0,
+            "records_saturated": 0, "valid_pct": 0.0, "quality": "unreadable",
+            "photopic_mean": None, "photopic_median": None, "photopic_max": None,
+            "melanopic_mean": None, "melanopic_median": None, "melanopic_max": None,
+            "parse_error": str(exc),
+        }
+
+
 def store_upload_path(participant_id: str, date_local: str, filename: str, source_path: Path, uploaded_by: str) -> dict:
     participant_id = str(participant_id or "").strip()
     date_local = normalize_date(date_local)
@@ -354,19 +368,8 @@ def store_upload_path(participant_id: str, date_local: str, filename: str, sourc
         storage.delete(object_key)
         raise RuntimeError("Lighting stored object size does not match upload")
 
-    qc_path: Path | None = None
     try:
-        qc_path = storage.download_to_temp(object_key)
-        try:
-            summary = parse_light_path(filename, qc_path)
-        except Exception as exc:
-            summary = {
-                "records_expected": EXPECTED_SAMPLES, "records_total": 0, "records_valid": 0,
-                "records_saturated": 0, "valid_pct": 0.0, "quality": "unreadable",
-                "photopic_mean": None, "photopic_median": None, "photopic_max": None,
-                "melanopic_mean": None, "melanopic_median": None, "melanopic_max": None,
-                "parse_error": str(exc),
-            }
+        summary = _parse_qc(filename, source_path)
         with db() as conn:
             conn.execute(
                 """INSERT INTO lighting_files(
@@ -387,10 +390,36 @@ def store_upload_path(participant_id: str, date_local: str, filename: str, sourc
     except Exception:
         storage.delete(object_key)
         raise
-    finally:
-        if qc_path is not None:
-            qc_path.unlink(missing_ok=True)
     return _public_upload(row)
+
+
+def rerun_qc(upload_uid: str) -> dict:
+    with db() as conn:
+        row = conn.execute("SELECT * FROM lighting_files WHERE upload_uid=?", (upload_uid,)).fetchone()
+    if not row:
+        raise ValueError("Lighting upload not found")
+    storage = get_light_storage()
+    if row["storage_backend"] != storage.backend:
+        raise ValueError("Lighting storage backend does not match current environment")
+    qc_path = storage.download_to_temp(row["object_key"])
+    try:
+        summary = _parse_qc(row["original_filename"], qc_path)
+    finally:
+        qc_path.unlink(missing_ok=True)
+    with db() as conn:
+        conn.execute(
+            """UPDATE lighting_files SET parser_version=?,records_expected=?,records_total=?,records_valid=?,
+               records_saturated=?,valid_pct=?,quality=?,photopic_mean=?,photopic_median=?,photopic_max=?,
+               melanopic_mean=?,melanopic_median=?,melanopic_max=?,parse_error=? WHERE upload_uid=?""",
+            (
+                PARSER_VERSION, summary["records_expected"], summary["records_total"], summary["records_valid"],
+                summary["records_saturated"], summary["valid_pct"], summary["quality"], summary["photopic_mean"],
+                summary["photopic_median"], summary["photopic_max"], summary["melanopic_mean"],
+                summary["melanopic_median"], summary["melanopic_max"], summary["parse_error"], upload_uid,
+            ),
+        )
+        updated = conn.execute("SELECT * FROM lighting_files WHERE upload_uid=?", (upload_uid,)).fetchone()
+    return _public_upload(updated)
 
 
 def store_upload(participant_id: str, date_local: str, filename: str, raw: bytes, uploaded_by: str) -> dict:
@@ -511,10 +540,10 @@ def daily_qc_rows() -> list[dict]:
                 morning_text = (exposure_day + timedelta(days=1)).isoformat()
                 light = best.get((subject["participant_id"], day_text))
                 start_utc, end_utc = _utc_bounds(exposure_day)
-                gps = bool(conn.execute(
-                    "SELECT 1 FROM gps_locations WHERE participant_id=? AND recorded_at_utc>=? AND recorded_at_utc<? LIMIT 1",
-                    (subject["participant_id"], start_utc, end_utc),
-                ).fetchone())
+                gps_summary = gps_service.daily_acquisition_summary(
+                    subject["participant_id"], start_utc, end_utc
+                )
+                gps = gps_summary["complete"]
                 evening = (subject["participant_id"], day_text, "evening") in forms
                 morning = (subject["participant_id"], morning_text, "morning") in forms
                 issues: list[dict[str, str]] = []
@@ -530,8 +559,13 @@ def daily_qc_rows() -> list[dict]:
                         issues.append({"type": "insufficient_light", "label": f"Lighting样本不足（{light['valid_pct']:.1f}%）"})
                     elif light["quality"] != "valid":
                         issues.append({"type": "unreadable_light", "label": "Lighting无法解析"})
-                    if not gps:
+                    if gps_summary["point_count"] == 0:
                         issues.append({"type": "missing_gps", "label": "GPS"})
+                    elif not gps:
+                        details = [f"{gps_summary['point_count']}点"]
+                        if "long_gap" in gps_summary["issues"]:
+                            details.append(f"最大断档{gps_summary['max_gap_seconds'] / 3600:.1f}h")
+                        issues.append({"type": "insufficient_gps", "label": f"GPS覆盖不足（{'，'.join(details)}）"})
                     if not morning:
                         issues.append({"type": "missing_morning", "label": f"次晨问卷（{morning_text}）"})
                 status = "pending" if not due else "missing" if issues else "ok"
@@ -540,6 +574,12 @@ def daily_qc_rows() -> list[dict]:
                     "date_local": day_text, "morning_date": morning_text,
                     "study_day": (exposure_day - start).days + 1, "status": status,
                     "evening": evening, "morning": morning, "gps": gps,
+                    "gps_quality": "ok" if gps else "missing" if gps_summary["point_count"] == 0 else "gps_insufficient",
+                    "gps_point_count": gps_summary["point_count"],
+                    "gps_first_recorded_at_utc": gps_summary["first_recorded_at_utc"],
+                    "gps_last_recorded_at_utc": gps_summary["last_recorded_at_utc"],
+                    "gps_max_gap_seconds": gps_summary["max_gap_seconds"],
+                    "gps_coverage_issues": gps_summary["issues"],
                     "lighting": "missing" if not light else light["quality"],
                     "light_valid_pct": light["valid_pct"] if light else None,
                     "light_records_valid": light["records_valid"] if light else None,
