@@ -635,7 +635,6 @@ def daily_qc_rows() -> list[dict]:
                 continue
             for exposure_day in _date_range(start, end):
                 day_text = exposure_day.isoformat()
-                morning_text = (exposure_day + timedelta(days=1)).isoformat()
                 light = best.get((subject["participant_id"], day_text))
                 start_utc, end_utc = _utc_bounds(exposure_day)
                 gps_summary = gps_service.daily_acquisition_summary(
@@ -643,7 +642,7 @@ def daily_qc_rows() -> list[dict]:
                 )
                 gps = gps_summary["complete"]
                 evening = (subject["participant_id"], day_text, "evening") in forms
-                morning = (subject["participant_id"], morning_text, "morning") in forms
+                morning = (subject["participant_id"], day_text, "morning") in forms
                 issues: list[dict[str, str]] = []
                 due = exposure_day < today - timedelta(days=1) or (
                     exposure_day == today - timedelta(days=1) and now_local.hour >= settings.qc_day_close_hour
@@ -665,11 +664,11 @@ def daily_qc_rows() -> list[dict]:
                             details.append(f"最大断档{gps_summary['max_gap_seconds'] / 3600:.1f}h")
                         issues.append({"type": "insufficient_gps", "label": f"GPS覆盖不足（{'，'.join(details)}）"})
                     if not morning:
-                        issues.append({"type": "missing_morning", "label": f"次晨问卷（{morning_text}）"})
+                        issues.append({"type": "missing_morning", "label": "晨间问卷"})
                 status = "pending" if not due else "missing" if issues else "ok"
                 results.append({
                     "participant_id": subject["participant_id"], "batch_id": subject["batch_id"],
-                    "date_local": day_text, "morning_date": morning_text,
+                    "date_local": day_text, "morning_date": day_text,
                     "study_day": (exposure_day - start).days + 1, "status": status,
                     "evening": evening, "morning": morning, "gps": gps,
                     "gps_quality": "ok" if gps else "missing" if gps_summary["point_count"] == 0 else "gps_insufficient",

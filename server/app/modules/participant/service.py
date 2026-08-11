@@ -75,30 +75,26 @@ def _clock_for_date(subject, target: date) -> tuple[str, int, int]:
 
 def form_target_date(form_key: str, local_now: datetime | None = None) -> date:
     current = local_now or datetime.now(ZoneInfo(settings.study_timezone))
-    target = current.date()
-    if form_key == "evening" and current.hour < settings.questionnaire_evening_cutoff_hour:
-        target -= timedelta(days=1)
-    return target
+    if form_key == "morning" or current.hour < settings.questionnaire_evening_cutoff_hour:
+        return current.date() - timedelta(days=1)
+    return current.date()
 
 
-def form_assignment(subject, form_key: str, local_now: datetime | None = None, calendar_day: date | None = None) -> dict:
-    current = local_now or datetime.now(ZoneInfo(settings.study_timezone))
-    calendar_day = calendar_day or current.date()
-    if form_key == "morning":
-        experiment_day = calendar_day - timedelta(days=1)
-        response_day = calendar_day
-    else:
-        crosses_midnight = current.hour < settings.questionnaire_evening_cutoff_hour
-        experiment_day = calendar_day - timedelta(days=1) if crosses_midnight else calendar_day
-        response_day = experiment_day
-    _, study_day, total_days = _clock_for_date(subject, experiment_day)
+def allowed_exposure_days(form_key: str, local_now: datetime | None = None) -> tuple[date, date]:
+    target = form_target_date(form_key, local_now)
+    return target, target - timedelta(days=1)
+
+
+def form_assignment(subject, form_key: str, exposure_day: date, calendar_day: date | None = None) -> dict:
+    calendar_day = calendar_day or local_today()
+    _, study_day, total_days = _clock_for_date(subject, exposure_day)
     return {
         "calendar_date_local": calendar_day.isoformat(),
-        "experiment_date_local": experiment_day.isoformat(),
-        "date_local": response_day.isoformat(),
+        "experiment_date_local": exposure_day.isoformat(),
+        "date_local": exposure_day.isoformat(),
         "study_day": study_day,
         "total_days": total_days,
-        "calendar_to_experiment_days": (experiment_day - calendar_day).days,
+        "calendar_to_experiment_days": (exposure_day - calendar_day).days,
     }
 
 
@@ -108,16 +104,15 @@ def _display_date(value: date) -> str:
 
 def form_time_scope(form_key: str, target: date) -> dict[str, str]:
     if form_key == "morning":
-        previous = target - timedelta(days=1)
+        following = target + timedelta(days=1)
         return {
             "label": "昨晚睡眠",
-            "range": f"{_display_date(previous)}晚 → {_display_date(target)}早",
+            "range": f"{_display_date(target)}晚 → {_display_date(following)}早",
             "explanation": (
-                f"“昨晚”是这次主要睡眠的实验归属名称。即使实际到{_display_date(target)}凌晨才入睡，"
-                f"入睡日历日仍是{_display_date(target)}，但睡眠归入{_display_date(previous)}晚；"
+                f"这次睡眠统一归入{_display_date(target)}实验日。即使实际到{_display_date(following)}凌晨才入睡，"
                 "入睡和醒来请填写实际日历时钟时间。"
             ),
-            "qc_exposure_date": previous.isoformat(),
+            "qc_exposure_date": target.isoformat(),
         }
     following = target + timedelta(days=1)
     return {
@@ -151,8 +146,8 @@ def portal_state(token: str) -> dict:
         raise LookupError("invalid participant link")
     local_now = datetime.now(ZoneInfo(settings.study_timezone))
     definitions = list_forms()
-    assignments = {definition["key"]: form_assignment(subject, definition["key"], local_now) for definition in definitions}
-    active_assignment = assignments["evening"]
+    targets = {definition["key"]: form_target_date(definition["key"], local_now) for definition in definitions}
+    active_assignment = form_assignment(subject, "evening", targets["evening"], local_now.date())
     with db() as conn:
         completed = {
             (r["form_key"], r["date_local"]): r["submitted_at_utc"]
@@ -162,25 +157,51 @@ def portal_state(token: str) -> dict:
             )
         }
     forms = []
-    for definition in definitions:
-        key = definition["key"]
-        assignment = assignments[key]
-        target = date.fromisoformat(
-            assignment["calendar_date_local"] if key == "morning" else assignment["experiment_date_local"]
-        )
-        forms.append({
-            **definition,
-            "version": FORM_VERSION,
-            **assignment,
-            "time_scope": form_time_scope(key, target),
-            "completed": (key, assignment["date_local"]) in completed,
-            "submitted_at_utc": completed.get((key, assignment["date_local"])),
+    for is_makeup in (False, True):
+        for definition in definitions:
+            key = definition["key"]
+            exposure_day = targets[key] - timedelta(days=1) if is_makeup else targets[key]
+            assignment = form_assignment(subject, key, exposure_day, local_now.date())
+            if not 1 <= assignment["study_day"] <= assignment["total_days"]:
+                continue
+            submitted_at = completed.get((key, assignment["date_local"]))
+            if is_makeup and submitted_at:
+                continue
+            forms.append({
+                **definition,
+                "title": f"补填上一实验日 · {definition['title']}" if is_makeup else definition["title"],
+                "version": FORM_VERSION,
+                "task_id": f"{key}:{assignment['date_local']}",
+                "is_makeup": is_makeup,
+                **assignment,
+                "time_scope": form_time_scope(key, exposure_day),
+                "completed": bool(submitted_at),
+                "submitted_at_utc": submitted_at,
+            })
+    exposure_date = targets["evening"]
+    lighting_tasks = []
+    for is_makeup, target in ((False, exposure_date), (True, exposure_date - timedelta(days=1))):
+        assignment = form_assignment(subject, "evening", target, local_now.date())
+        if not 1 <= assignment["study_day"] <= assignment["total_days"]:
+            continue
+        item = light_service.portal_light_state(subject["participant_id"], target.isoformat())
+        if is_makeup and item["status"] != "missing":
+            continue
+        item.update({
+            "task_id": f"lighting:{target.isoformat()}",
+            "is_makeup": is_makeup,
+            "title": "补传上一实验日 Lighting" if is_makeup else "Lighting 光照记录",
+            "date_local": target.isoformat(),
+            "study_day": assignment["study_day"],
+            "direct_upload": settings.light_storage_backend == "oss",
+            "time_scope": form_time_scope("evening", target),
         })
-    exposure_date = form_target_date("evening", local_now)
-    lighting = light_service.portal_light_state(subject["participant_id"], exposure_date.isoformat())
-    lighting["date_local"] = exposure_date.isoformat()
-    lighting["direct_upload"] = settings.light_storage_backend == "oss"
-    lighting["time_scope"] = form_time_scope("evening", exposure_date)
+        lighting_tasks.append(item)
+    lighting = lighting_tasks[0] if lighting_tasks else {
+        "status": "missing", "uploaded": False, "quality": None, "valid_pct": None,
+        "date_local": exposure_date.isoformat(), "direct_upload": settings.light_storage_backend == "oss",
+        "time_scope": form_time_scope("evening", exposure_date),
+    }
     return {
         "study_title": "光迹计划（北京）",
         "portal_title": "LEHUE Study",
@@ -192,6 +213,7 @@ def portal_state(token: str) -> dict:
         "total_days": active_assignment["total_days"],
         "gps": _gps_state(subject["participant_id"]),
         "lighting": lighting,
+        "lighting_tasks": lighting_tasks,
         "forms": forms,
         "notice": "这是 LEHUE 被试专属工作入口。链接本身用于识别身份，请勿转发给他人。",
     }
@@ -207,17 +229,11 @@ def _lighting_participant(token: str, date_local: str) -> str:
         exposure_day = date.fromisoformat(date_local)
     except ValueError as exc:
         raise ValueError("Lighting 暴露日期必须使用 YYYY-MM-DD") from exc
-    today = local_today()
-    if exposure_day > today:
-        raise ValueError("不能上传未来日期的 Lighting 文件")
-    start_raw = subject["start_date"] or subject["expected_start"]
-    if start_raw:
-        try:
-            start_day = date.fromisoformat(start_raw)
-        except ValueError:
-            start_day = None
-        if start_day and exposure_day < start_day:
-            raise ValueError("所选日期早于实验开始日期")
+    if exposure_day not in allowed_exposure_days("evening"):
+        raise ValueError("Lighting 只允许上传当前目标实验日或上一实验日")
+    assignment = form_assignment(subject, "evening", exposure_day)
+    if not 1 <= assignment["study_day"] <= assignment["total_days"]:
+        raise ValueError("所选实验日不在本次实验范围内")
     return subject["participant_id"]
 
 
@@ -238,7 +254,7 @@ def complete_lighting_direct(token: str, upload_uid: str) -> dict:
     return light_service.complete_direct_upload(subject["participant_id"], upload_uid)
 
 
-def submit_questionnaire(token: str, form_key: str, answers: dict, calendar_date_local: str = "") -> dict:
+def submit_questionnaire(token: str, form_key: str, answers: dict, date_local: str = "") -> dict:
     subject = _resolve_subject(token)
     if not subject:
         raise LookupError("invalid participant link")
@@ -249,12 +265,14 @@ def submit_questionnaire(token: str, form_key: str, answers: dict, calendar_date
         raise LookupError("questionnaire not found")
     local_now = datetime.now(ZoneInfo(settings.study_timezone))
     try:
-        calendar_day = date.fromisoformat(calendar_date_local) if calendar_date_local else local_now.date()
+        exposure_day = date.fromisoformat(date_local) if date_local else form_target_date(form_key, local_now)
     except ValueError as exc:
-        raise ValueError("日历日必须使用 YYYY-MM-DD") from exc
-    assignment = form_assignment(subject, form_key, local_now, calendar_day)
+        raise ValueError("实验日必须使用 YYYY-MM-DD") from exc
+    if exposure_day not in allowed_exposure_days(form_key, local_now):
+        raise ValueError("问卷只允许填写当前目标实验日或上一实验日")
+    assignment = form_assignment(subject, form_key, exposure_day, local_now.date())
     if not 1 <= assignment["study_day"] <= assignment["total_days"]:
-        raise ValueError("所选日历日不在本次实验范围内")
+        raise ValueError("所选实验日不在本次实验范围内")
     normalized = validate_answers(form, answers or {})
     submitted = now_iso()
     try:

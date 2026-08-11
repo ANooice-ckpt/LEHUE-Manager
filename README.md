@@ -47,10 +47,11 @@ LEHUE-Manager/
 - 问卷不再依赖问卷星/每日 CSV 下载；答案直接写入 `lehue.sqlite3` 的 `questionnaire_responses`。
 - 两份正式问卷由独立 `questionnaire/forms.py` 模块提供，均在一个移动端页面内完成，不建设复杂问卷设计器。
 - Admin 的被试表与 Dashboard 可看到当前两个任务问卷的完成数；数据源页将 Questionnaire 标记为 LEHUE native connected。
-- 被试端同时显示可修改的“日历日”和自动推导的“实验日 / Study Day”。例如 8 月 15 日 03:00 入睡、08:00 起床时，两份问卷都显示日历日 8 月 15 日、实验日 8 月 14 日；“昨晚”明确显示为“8 月 14 日晚 → 8 月 15 日早”。
-- 日期按 `STUDY_TIMEZONE` 归属：睡前问卷匹配实验日，晨间问卷保留次日起床日用于 QC 配对；被试修正日历日后，服务端重新计算实验日并校验其处于实验范围内。
+- 问卷、Lighting、GPS 和 Daily QC 统一以实验日 `d` 归属：睡前问卷与次日起床后填写的晨间问卷都保存为 `date_local=d`，真实提交时间继续保存在 `submitted_at_utc`；`calendar_date_local` 仅记录实际提交日历日。
+- Portal 只显示当前目标实验日，并在上一实验日确有缺失时增加明确的补填/补传入口，不提供任意历史日期输入。`QUESTIONNAIRE_EVENING_CUTOFF_HOUR` 只决定睡前问卷和 Lighting 当前默认目标日，不重新解释已经明确选择的实验日。
+- Daily QC 对同一个实验日直接核对 `evening[d] + morning[d] + lighting[d] + gps[d]`；前一实验日到 `QC_DAY_CLOSE_HOUR` 后才产生缺失提醒，补齐后下一次 QC 自动恢复。
 - 为容纳晚睡晚起，前一暴露日默认到本地 18:00 才关闭并判缺；两条边界可分别通过 `QUESTIONNAIRE_EVENING_CUTOFF_HOUR` 和 `QC_DAY_CLOSE_HOUR` 调整。
-- 旧 v0.3.x 数据库可原地升级：启动时自动增加 portal token 和问卷日历日字段；问卷响应表不存在时自动创建，不清空旧数据。
+- 旧数据库可原地升级：启动时自动增加必要字段，并把本系统旧语义中 `date_local=calendar_date_local` 的晨间记录迁回其前一实验日，不修改答案或真实提交时间。
 - 系统状态备份自动包含问卷响应。
 
 ## 第一次 Windows 本地运行

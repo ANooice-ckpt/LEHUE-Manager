@@ -273,6 +273,20 @@ def _ensure_questionnaire_columns(conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE questionnaire_responses SET calendar_date_local=date_local WHERE calendar_date_local=''")
 
 
+def _normalize_questionnaire_exposure_dates(conn: sqlite3.Connection) -> None:
+    legacy_rows = conn.execute(
+        """SELECT id,participant_id,date(date_local,'-1 day') exposure_day
+           FROM questionnaire_responses
+           WHERE form_key='morning' AND calendar_date_local=date_local"""
+    ).fetchall()
+    for row in legacy_rows:
+        if not conn.execute(
+            "SELECT 1 FROM questionnaire_responses WHERE participant_id=? AND date_local=? AND form_key='morning' AND id<>?",
+            (row["participant_id"], row["exposure_day"], row["id"]),
+        ).fetchone():
+            conn.execute("UPDATE questionnaire_responses SET date_local=? WHERE id=?", (row["exposure_day"], row["id"]))
+
+
 def _normalize_incident_statuses(conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE incidents SET status='open' WHERE status='handling'")
     conn.execute("UPDATE incidents SET status='closed' WHERE status='resolved'")
@@ -290,6 +304,7 @@ def init_db() -> None:
         _ensure_subject_columns(conn)
         _ensure_lighting_columns(conn)
         _ensure_questionnaire_columns(conn)
+        _normalize_questionnaire_exposure_dates(conn)
         _normalize_incident_statuses(conn)
         conn.commit()
     finally:

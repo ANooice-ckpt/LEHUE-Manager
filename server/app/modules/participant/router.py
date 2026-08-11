@@ -33,7 +33,7 @@ async def questionnaire_submit(portal_token: str, form_key: str, request: Reques
             portal_token,
             form_key,
             data.get("answers") or {},
-            str(data.get("calendar_date_local") or ""),
+            str(data.get("date_local") or ""),
         )
     except LookupError:
         raise HTTPException(status_code=404, detail="Invalid or expired participant link")

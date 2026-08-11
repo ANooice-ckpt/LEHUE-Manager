@@ -65,7 +65,7 @@ def test_lighting_upload_and_daily_qc(monkeypatch):
             )
             conn.execute(
                 "INSERT INTO questionnaire_responses(participant_id,date_local,study_day,form_key,answers_json,submitted_at_utc) VALUES(?,?,?,?,?,?)",
-                ("001", today.isoformat(), 2, "morning", "{}", now),
+                ("001", yesterday.isoformat(), 1, "morning", "{}", now),
             )
 
         raw = _valid_light_csv()
@@ -109,13 +109,29 @@ def test_lighting_upload_and_daily_qc(monkeypatch):
             assert mismatch.status_code == 400
             assert client.get(f"/api/v1/portal/{token}").json()["lighting"]["status"] == "done"
 
+        with dbmod.db() as conn:
+            conn.execute("DELETE FROM questionnaire_responses WHERE participant_id='001' AND form_key='morning'")
+        missing_qc = light.run_daily_qc("tester")
+        missing_yesterday = next(row for row in missing_qc["rows"] if row["date_local"] == yesterday.isoformat())
+        assert missing_yesterday["status"] == "missing"
+        assert any(issue["type"] == "missing_morning" for issue in missing_yesterday["issues"])
+        with dbmod.db() as conn:
+            conn.execute(
+                "INSERT INTO questionnaire_responses(participant_id,date_local,study_day,form_key,answers_json,submitted_at_utc) VALUES(?,?,?,?,?,?)",
+                ("001", yesterday.isoformat(), 1, "morning", "{}", now),
+            )
         qc = light.run_daily_qc("tester")
         yesterday_row = next(row for row in qc["rows"] if row["date_local"] == yesterday.isoformat())
         today_row = next(row for row in qc["rows"] if row["date_local"] == today.isoformat())
         assert yesterday_row["status"] == "ok"
+        assert yesterday_row["morning_date"] == yesterday.isoformat()
         assert today_row["status"] == "pending"
         with dbmod.db() as conn:
             assert conn.execute("SELECT valid_days FROM study_subjects WHERE participant_id='001'").fetchone()["valid_days"] == 1
+            assert conn.execute(
+                "SELECT status FROM incidents WHERE incident_uid=?",
+                (f"acq_001_{yesterday.isoformat()}_missing_morning",),
+            ).fetchone()["status"] == "closed"
 
 
 def test_oss_direct_upload_can_resume_and_finish_qc(monkeypatch):
