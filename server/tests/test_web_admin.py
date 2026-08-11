@@ -95,11 +95,15 @@ def test_web_admin_flow(monkeypatch):
             old_token = portal.json()['path'].removeprefix('/p/')
             assert client.get(f'/api/v1/portal/{old_token}').status_code == 404
             assert client.post('/api/v1/web/subjects/001/start', json={'pack_id':'D01','start_date':'2026-09-01','end_date':'2026-09-14'}, headers=h).status_code == 200
-            edited_subject = client.post('/api/v1/web/subjects/001', json={'batch_id':'B2','assigned_ra':'ra01','planned_end':'2026-09-15','notes':'late return'}, headers=h)
+            edited_subject = client.post('/api/v1/web/subjects/001', json={'batch_id':'B2','assigned_ra':'ra01','planned_start':'2026-08-31','planned_end':'2026-09-15','notes':'late return'}, headers=h)
             assert edited_subject.status_code == 200
             subject = next(x for x in client.get('/api/v1/web/subjects').json() if x['participant_id'] == '001')
-            assert subject['batch_id'] == 'B2' and subject['end_date'] == '2026-09-15'
+            assert subject['batch_id'] == 'B2' and subject['start_date'] == '2026-08-31' and subject['end_date'] == '2026-09-15'
             assert 'study_day' in subject
+            device = next(x for x in client.get('/api/v1/web/devices').json() if x['pack_id'] == 'D01')
+            assert device['issued_date'] == '2026-08-31' and device['expected_return_date'] == '2026-09-15'
+            invalid_period = client.post('/api/v1/web/subjects/001', json={'planned_start':'2026-09-16','planned_end':'2026-09-15'}, headers=h)
+            assert invalid_period.status_code == 400
             track = client.get('/api/v1/web/subjects/001/gps-track?hours=12')
             assert track.status_code == 200
             assert track.json()['total_point_count'] == 0

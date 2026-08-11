@@ -209,24 +209,40 @@ def update_subject(participant_id: str, data: dict[str, Any], operator: str):
         row = conn.execute("SELECT * FROM study_subjects WHERE participant_id=?", (participant_id,)).fetchone()
         if not row:
             raise ValueError("participant not found")
-        planned_end = str(data.get("planned_end", row["end_date"] or row["expected_end"]) or "").strip()
-        if planned_end:
+        actual_period = row["status"] != "scheduled" or bool(row["start_date"])
+        current_start = row["start_date"] if actual_period else row["expected_start"]
+        current_end = row["end_date"] if actual_period else row["expected_end"]
+        planned_start = str(data.get("planned_start", current_start) or "").strip()
+        planned_end = str(data.get("planned_end", current_end) or "").strip()
+        for label, value in (("开始", planned_start), ("结束", planned_end)):
+            if not value:
+                continue
             try:
-                date.fromisoformat(planned_end)
+                date.fromisoformat(value)
             except ValueError as exc:
-                raise ValueError("结束日期必须使用 YYYY-MM-DD") from exc
-        end_field = "end_date" if row["status"] == "running" else "expected_end"
+                raise ValueError(f"{label}日期必须使用 YYYY-MM-DD") from exc
+        if planned_start and planned_end and planned_end < planned_start:
+            raise ValueError("结束日期不能早于开始日期")
+        start_field = "start_date" if actual_period else "expected_start"
+        end_field = "end_date" if actual_period else "expected_end"
+        now = now_iso()
         conn.execute(
-            f"UPDATE study_subjects SET batch_id=?,assigned_ra=?,notes=?,{end_field}=?,updated_at_utc=? WHERE participant_id=?",
+            f"UPDATE study_subjects SET batch_id=?,assigned_ra=?,notes=?,{start_field}=?,{end_field}=?,updated_at_utc=? WHERE participant_id=?",
             (
                 str(data.get("batch_id", row["batch_id"]) or "").strip(),
                 str(data.get("assigned_ra", row["assigned_ra"]) or "").strip(),
                 str(data.get("notes", row["notes"]) or "").strip(),
+                planned_start,
                 planned_end,
-                now_iso(),
+                now,
                 participant_id,
             ),
         )
+        if actual_period and row["pack_id"]:
+            conn.execute(
+                "UPDATE device_packs SET issued_date=?,expected_return_date=?,updated_at_utc=? WHERE pack_id=? AND current_participant_id=?",
+                (planned_start, planned_end, now, row["pack_id"], participant_id),
+            )
     audit(operator, "subject.update", "participant", participant_id)
 
 

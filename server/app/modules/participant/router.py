@@ -56,6 +56,16 @@ async def lighting_submit(portal_token: str, date_local: str, filename: str, req
             path.unlink(missing_ok=True)
 
 
+@router.get("/api/v1/portal/{portal_token}/report")
+def participant_report(portal_token: str):
+    try:
+        return service.participant_report(portal_token)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Invalid or expired participant link")
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+
 @router.post("/api/v1/portal/{portal_token}/lighting/direct")
 async def lighting_direct_prepare(portal_token: str, request: Request):
     data = await request.json()

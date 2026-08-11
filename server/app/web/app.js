@@ -45,8 +45,8 @@ function renderSubjectRows(){const q=$('subjectSearch').value.trim().toLowerCase
   document.querySelectorAll('[data-edit-subject]').forEach(b=>b.addEventListener('click',()=>openSubjectEdit(b.dataset.editSubject)));
 }
 async function renderSubjects(){subjectCache=await api('/api/v1/web/subjects');renderSubjectRows()}
-function openSubjectEdit(pid){const x=subjectCache.find(row=>row.participant_id===pid);if(!x)return;selectedEditSubject=pid;$('subjectEditTitle').textContent=`编辑被试 ${pid}`;$('seBatch').value=x.batch_id||'';$('seRa').value=x.assigned_ra||'';$('seEnd').value=x.end_date||x.expected_end||'';$('seNotes').value=x.notes||'';$('subjectEditDialog').showModal()}
-async function saveSubjectEdit(){await api(`/api/v1/web/subjects/${encodeURIComponent(selectedEditSubject)}`,{method:'POST',body:JSON.stringify({batch_id:$('seBatch').value,assigned_ra:$('seRa').value,planned_end:$('seEnd').value,notes:$('seNotes').value})});$('subjectEditDialog').close();toast('被试信息已更新');await renderSubjects()}
+function openSubjectEdit(pid){const x=subjectCache.find(row=>row.participant_id===pid);if(!x)return;selectedEditSubject=pid;$('subjectEditTitle').textContent=`编辑被试 ${pid}`;$('seBatch').value=x.batch_id||'';$('seRa').value=x.assigned_ra||'';$('seStart').value=x.start_date||x.expected_start||'';$('seEnd').value=x.end_date||x.expected_end||'';$('seNotes').value=x.notes||'';$('subjectEditDialog').showModal()}
+async function saveSubjectEdit(){await api(`/api/v1/web/subjects/${encodeURIComponent(selectedEditSubject)}`,{method:'POST',body:JSON.stringify({batch_id:$('seBatch').value,assigned_ra:$('seRa').value,planned_start:$('seStart').value,planned_end:$('seEnd').value,notes:$('seNotes').value})});$('subjectEditDialog').close();toast('被试信息已更新');await renderSubjects()}
 function formatGap(seconds){if(seconds===null||seconds===undefined)return '—';return seconds>=60?`${(seconds/60).toFixed(1)} min`:`${Number(seconds).toFixed(0)} s`}
 function ensureGpsMap(config){
   if(!gpsTrackMap){gpsTrackMap=L.map('gpsTrackMap',{preferCanvas:true});gpsTrackLayers=L.layerGroup().addTo(gpsTrackMap)}

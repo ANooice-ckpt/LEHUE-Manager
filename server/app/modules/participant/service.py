@@ -140,6 +140,117 @@ def _gps_state(participant_id: str) -> dict:
     )
 
 
+def _study_bounds(subject) -> tuple[date | None, date | None]:
+    try:
+        start = date.fromisoformat(subject["start_date"] or subject["expected_start"])
+    except (TypeError, ValueError):
+        return None, None
+    try:
+        end = date.fromisoformat(subject["final_end"] or subject["end_date"] or subject["expected_end"])
+    except (TypeError, ValueError):
+        end = start
+    return start, max(start, end)
+
+
+def _portal_progress(conn, subject, targets: dict[str, date]) -> dict:
+    start, end = _study_bounds(subject)
+    if not start or not end:
+        return {"completed": 0, "expected": 0, "percent": 0, "days": []}
+    last_day = min(end, max(targets.values()))
+    if last_day < start:
+        return {"completed": 0, "expected": 0, "percent": 0, "days": []}
+    questionnaires = {
+        (row["date_local"], row["form_key"])
+        for row in conn.execute(
+            "SELECT date_local,form_key FROM questionnaire_responses WHERE participant_id=?",
+            (subject["participant_id"],),
+        )
+    }
+    lighting = {
+        row["date_local"]
+        for row in conn.execute(
+            "SELECT DISTINCT date_local FROM lighting_files WHERE participant_id=? AND upload_status='qc' AND quality='valid'",
+            (subject["participant_id"],),
+        )
+    }
+    completed_total = expected_total = 0
+    days = []
+    current = start
+    while current <= last_day:
+        states = {
+            "morning": "done" if (current.isoformat(), "morning") in questionnaires else "pending",
+            "evening": "done" if (current.isoformat(), "evening") in questionnaires else "pending",
+            "lighting": "done" if current.isoformat() in lighting else "pending",
+        }
+        due = {
+            "morning": current <= targets["morning"],
+            "evening": current <= targets["evening"],
+            "lighting": current <= targets["evening"],
+        }
+        for key in states:
+            if not due[key] and states[key] != "done":
+                states[key] = "not_due"
+        expected = sum(due.values())
+        completed = sum(due[key] and states[key] == "done" for key in states)
+        completed_total += completed
+        expected_total += expected
+        days.append({
+            "date_local": current.isoformat(),
+            "study_day": (current - start).days + 1,
+            "completed": completed,
+            "expected": expected,
+            "morning": states["morning"],
+            "evening": states["evening"],
+            "lighting": states["lighting"],
+        })
+        current += timedelta(days=1)
+    return {
+        "completed": completed_total,
+        "expected": expected_total,
+        "percent": round(completed_total / expected_total * 100) if expected_total else 0,
+        "days": days,
+    }
+
+
+def _cohort_progress(conn, participant_id: str, today: date) -> dict:
+    running_others = completed_others = 0
+    for row in conn.execute(
+        "SELECT participant_id,status,expected_start,expected_end,start_date,end_date,final_end FROM study_subjects WHERE participant_id<>?",
+        (participant_id,),
+    ):
+        start, end = _study_bounds(row)
+        explicitly_completed = row["status"] in {"completed", "finished", "closed"}
+        if row["status"] == "running" and start and end and start <= today <= end:
+            running_others += 1
+        elif explicitly_completed or (row["status"] == "running" and end and end < today):
+            completed_others += 1
+    active_today = conn.execute(
+        """SELECT COUNT(DISTINCT participant_id) n FROM (
+               SELECT participant_id FROM questionnaire_responses
+                WHERE calendar_date_local=? AND participant_id<>?
+               UNION
+               SELECT participant_id FROM lighting_files
+                WHERE calendar_date_local=? AND participant_id<>?
+           )""",
+        (today.isoformat(), participant_id, today.isoformat(), participant_id),
+    ).fetchone()["n"]
+    return {
+        "running_others": running_others,
+        "completed_others": completed_others,
+        "active_today": int(active_today),
+    }
+
+
+def _report_state(subject, today: date) -> dict:
+    _, end = _study_bounds(subject)
+    ended = subject["status"] in {"completed", "finished", "closed"} or bool(subject["start_date"] and end and end < today)
+    return {
+        "available": False,
+        "status": "preparing" if ended else "locked",
+        "unlocks_after": end.isoformat() if end else "",
+    }
+
+
 def portal_state(token: str) -> dict:
     subject = _resolve_subject(token)
     if not subject:
@@ -156,6 +267,8 @@ def portal_state(token: str) -> dict:
                 (subject["participant_id"],),
             )
         }
+        progress = _portal_progress(conn, subject, targets)
+        cohort = _cohort_progress(conn, subject["participant_id"], local_now.date())
     forms = []
     for is_makeup in (False, True):
         for definition in definitions:
@@ -205,17 +318,36 @@ def portal_state(token: str) -> dict:
     return {
         "study_title": "光迹计划（北京）",
         "portal_title": "LEHUE Study",
+        "participant_id": subject["participant_id"],
+        "study_timezone": settings.study_timezone,
         "status": subject["status"],
         "date_local": local_now.date().isoformat(),
         "calendar_date_local": local_now.date().isoformat(),
         "experiment_date_local": active_assignment["experiment_date_local"],
         "study_day": active_assignment["study_day"],
         "total_days": active_assignment["total_days"],
+        "progress": progress,
+        "cohort": cohort,
+        "report": _report_state(subject, local_now.date()),
         "gps": _gps_state(subject["participant_id"]),
         "lighting": lighting,
         "lighting_tasks": lighting_tasks,
         "forms": forms,
         "notice": "这是 LEHUE 被试专属工作入口。链接本身用于识别身份，请勿转发给他人。",
+    }
+
+
+def participant_report(token: str) -> dict:
+    subject = _resolve_subject(token)
+    if not subject:
+        raise LookupError("invalid participant link")
+    report = _report_state(subject, local_today())
+    if report["status"] == "locked":
+        raise PermissionError("实验结束后才可查看个人睡眠与光照报告")
+    return {
+        **report,
+        "participant_id": subject["participant_id"],
+        "message": "实验报告接口已就绪；报告生成完成后将在这里开放查看。",
     }
 
 
