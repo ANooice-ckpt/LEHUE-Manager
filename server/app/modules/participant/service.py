@@ -224,15 +224,18 @@ def _cohort_progress(conn, participant_id: str, today: date) -> dict:
             running_others += 1
         elif explicitly_completed or (row["status"] == "running" and end and end < today):
             completed_others += 1
+    local_start = datetime(today.year, today.month, today.day, tzinfo=ZoneInfo(settings.study_timezone))
+    utc_start = local_start.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    utc_end = (local_start + timedelta(days=1)).astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
     active_today = conn.execute(
         """SELECT COUNT(DISTINCT participant_id) n FROM (
                SELECT participant_id FROM questionnaire_responses
                 WHERE calendar_date_local=? AND participant_id<>?
                UNION
                SELECT participant_id FROM lighting_files
-                WHERE calendar_date_local=? AND participant_id<>?
+                WHERE uploaded_at_utc>=? AND uploaded_at_utc<? AND participant_id<>?
            )""",
-        (today.isoformat(), participant_id, today.isoformat(), participant_id),
+        (today.isoformat(), participant_id, utc_start, utc_end, participant_id),
     ).fetchone()["n"]
     return {
         "running_others": running_others,

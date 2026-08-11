@@ -60,6 +60,8 @@ def test_participant_portal_questionnaire_flow(monkeypatch):
         yesterday = (today_date - date.resolution).isoformat()
         end = (today_date + date.resolution * 12).isoformat()
         with dbmod.db() as conn:
+            # Existing deployments created before this field was declared do not have it.
+            conn.execute("ALTER TABLE lighting_files DROP COLUMN calendar_date_local")
             conn.execute(
                 "INSERT INTO study_subjects(participant_id,status,start_date,end_date,created_at_utc,updated_at_utc) VALUES(?,?,?,?,?,?)",
                 ("001", "running", yesterday, end, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
