@@ -8,6 +8,7 @@ services:
       - .env
     environment:
       LEHUE_ENV: ${LEHUE_ENV:?Set LEHUE_ENV=test or LEHUE_ENV=prod before starting}
+      LIGHT_STORAGE_BACKEND: ${LIGHT_STORAGE_BACKEND:-local}
       DATA_ROOT: /app/data
     volumes:
       - ./server/data:/app/data

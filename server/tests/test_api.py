@@ -67,6 +67,7 @@ def test_end_to_end(monkeypatch):
 
             h = client.get("/health").json()
             assert h["gps_location_count"] == 1
+            assert h["light_storage_backend"] == "local"
 
             admin_headers = {"Authorization": "Bearer admin-test-token"}
             status = client.get(

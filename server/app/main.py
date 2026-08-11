@@ -83,6 +83,7 @@ def health():
             "project": settings.project_name,
             "version": settings.app_version,
             "runtime_environment": settings.runtime_env,
+            "light_storage_backend": settings.light_storage_backend,
             "database": "ok",
             "gps_location_count": count,
             "questionnaire_response_count": questionnaire_count,
@@ -97,6 +98,7 @@ def health():
             "project": settings.project_name,
             "version": settings.app_version,
             "runtime_environment": settings.runtime_env,
+            "light_storage_backend": settings.light_storage_backend,
             "database": "error",
             "detail": str(exc),
         }
