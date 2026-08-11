@@ -578,10 +578,10 @@ def run_daily_qc(operator: str) -> dict:
                            VALUES(?,?,?,?,?,'normal','open',?,?,?)""",
                         (uid, row["participant_id"], row["date_local"], "acquisition_qc", item["type"], summary, now, now),
                     )
-        auto_open = [row["incident_uid"] for row in conn.execute("SELECT incident_uid FROM incidents WHERE source='acquisition_qc' AND status IN ('open','handling')")]
+        auto_open = [row["incident_uid"] for row in conn.execute("SELECT incident_uid FROM incidents WHERE source='acquisition_qc' AND status='open'")]
         for uid in auto_open:
             if uid not in expected_incidents:
-                conn.execute("UPDATE incidents SET status='resolved',updated_at_utc=? WHERE incident_uid=?", (now_iso(), uid))
+                conn.execute("UPDATE incidents SET status='closed',updated_at_utc=? WHERE incident_uid=?", (now_iso(), uid))
         participant_ids = {row["participant_id"] for row in rows}
         for participant_id in participant_ids:
             conn.execute("UPDATE study_subjects SET valid_days=?,updated_at_utc=? WHERE participant_id=?", (valid_days.get(participant_id, 0), now_iso(), participant_id))

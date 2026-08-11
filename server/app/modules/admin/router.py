@@ -340,11 +340,6 @@ async def incident_status(incident_uid: str, request: Request, operator=Depends(
         raise HTTPException(status_code=400, detail=str(exc))
 
 
-@router.get("/api/v1/web/architecture")
-def architecture(operator=Depends(require_operator)):
-    return service.architecture()
-
-
 @router.get("/api/v1/web/data-sources")
 def data_sources(operator=Depends(require_operator)):
     return service.data_sources()

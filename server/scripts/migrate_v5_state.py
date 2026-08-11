@@ -65,7 +65,7 @@ def main():
         for i in state.get("issues",[]):
             uid=str(i.get("issue_id") or f"legacy_inc_{counts['incidents']+1}")
             status=i.get("status",'open')
-            if status == 'resolved': status='resolved'
+            status = 'closed' if status in {'resolved', 'closed'} else 'open'
             conn.execute("""INSERT INTO incidents(incident_uid,participant_id,date_local,source,incident_type,severity,status,assigned_ra,summary,notes,created_at_utc,updated_at_utc)
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(incident_uid) DO UPDATE SET participant_id=excluded.participant_id,date_local=excluded.date_local,source=excluded.source,incident_type=excluded.incident_type,severity=excluded.severity,status=excluded.status,assigned_ra=excluded.assigned_ra,summary=excluded.summary,notes=excluded.notes,updated_at_utc=excluded.updated_at_utc""",
             (uid,sid(i.get("subject_id")),i.get("date",''),'legacy',i.get("issue_type",''),i.get("severity",'normal'),status,i.get("assigned_ra",''),i.get("message") or i.get("item_label",''),i.get("notes",''),now,now))

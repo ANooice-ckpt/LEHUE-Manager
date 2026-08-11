@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS lighting_files (
     upload_uid TEXT NOT NULL UNIQUE,
     participant_id TEXT NOT NULL,
     date_local TEXT NOT NULL,
+    calendar_date_local TEXT NOT NULL DEFAULT '',
     original_filename TEXT NOT NULL,
     stored_path TEXT NOT NULL,
     storage_backend TEXT NOT NULL DEFAULT 'local',
@@ -208,6 +209,10 @@ LIGHTING_COLUMNS = {
     "object_key": "TEXT NOT NULL DEFAULT ''",
 }
 
+QUESTIONNAIRE_COLUMNS = {
+    "calendar_date_local": "TEXT NOT NULL DEFAULT ''",
+}
+
 
 def connect() -> sqlite3.Connection:
     settings.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -258,6 +263,19 @@ def _ensure_lighting_columns(conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE lighting_files SET object_key=stored_path WHERE object_key='' AND stored_path<>''")
 
 
+def _ensure_questionnaire_columns(conn: sqlite3.Connection) -> None:
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(questionnaire_responses)")}
+    for name, declaration in QUESTIONNAIRE_COLUMNS.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE questionnaire_responses ADD COLUMN {name} {declaration}")
+    conn.execute("UPDATE questionnaire_responses SET calendar_date_local=date_local WHERE calendar_date_local=''")
+
+
+def _normalize_incident_statuses(conn: sqlite3.Connection) -> None:
+    conn.execute("UPDATE incidents SET status='open' WHERE status='handling'")
+    conn.execute("UPDATE incidents SET status='closed' WHERE status='resolved'")
+
+
 def init_db() -> None:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     settings.raw_archive_dir.mkdir(parents=True, exist_ok=True)
@@ -269,6 +287,8 @@ def init_db() -> None:
         _ensure_participant_columns(conn)
         _ensure_subject_columns(conn)
         _ensure_lighting_columns(conn)
+        _ensure_questionnaire_columns(conn)
+        _normalize_incident_statuses(conn)
         conn.commit()
     finally:
         conn.close()

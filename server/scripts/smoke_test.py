@@ -1,16 +1,12 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path as _Path
-sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
-
 import argparse
 import json
 import time
 import urllib.request
 import base64
-
-from app.core.config import settings
+from pathlib import Path
 
 
 def request(url, method="GET", data=None, headers=None):
@@ -21,6 +17,9 @@ def request(url, method="GET", data=None, headers=None):
 
 
 def main():
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from app.core.config import settings
+
     p=argparse.ArgumentParser()
     p.add_argument("--base", default="http://127.0.0.1:8085")
     p.add_argument("--user", default="TEST01")

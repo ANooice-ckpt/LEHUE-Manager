@@ -73,10 +73,6 @@ def _clock_for_date(subject, target: date) -> tuple[str, int, int]:
     return target.isoformat(), day, total
 
 
-def _study_clock(subject) -> tuple[str, int, int]:
-    return _clock_for_date(subject, local_today())
-
-
 def form_target_date(form_key: str, local_now: datetime | None = None) -> date:
     current = local_now or datetime.now(ZoneInfo(settings.study_timezone))
     target = current.date()
@@ -85,8 +81,55 @@ def form_target_date(form_key: str, local_now: datetime | None = None) -> date:
     return target
 
 
-def _form_clock(subject, form_key: str, local_now: datetime | None = None) -> tuple[str, int, int]:
-    return _clock_for_date(subject, form_target_date(form_key, local_now))
+def form_assignment(subject, form_key: str, local_now: datetime | None = None, calendar_day: date | None = None) -> dict:
+    current = local_now or datetime.now(ZoneInfo(settings.study_timezone))
+    calendar_day = calendar_day or current.date()
+    if form_key == "morning":
+        experiment_day = calendar_day - timedelta(days=1)
+        response_day = calendar_day
+    else:
+        crosses_midnight = current.hour < settings.questionnaire_evening_cutoff_hour
+        experiment_day = calendar_day - timedelta(days=1) if crosses_midnight else calendar_day
+        response_day = experiment_day
+    _, study_day, total_days = _clock_for_date(subject, experiment_day)
+    return {
+        "calendar_date_local": calendar_day.isoformat(),
+        "experiment_date_local": experiment_day.isoformat(),
+        "date_local": response_day.isoformat(),
+        "study_day": study_day,
+        "total_days": total_days,
+        "calendar_to_experiment_days": (experiment_day - calendar_day).days,
+    }
+
+
+def _display_date(value: date) -> str:
+    return f"{value.month}月{value.day}日"
+
+
+def form_time_scope(form_key: str, target: date) -> dict[str, str]:
+    if form_key == "morning":
+        previous = target - timedelta(days=1)
+        return {
+            "label": "昨晚睡眠",
+            "range": f"{_display_date(previous)}晚 → {_display_date(target)}早",
+            "explanation": (
+                f"“昨晚”是这次主要睡眠的实验归属名称。即使实际到{_display_date(target)}凌晨才入睡，"
+                f"入睡日历日仍是{_display_date(target)}，但睡眠归入{_display_date(previous)}晚；"
+                "入睡和醒来请填写实际日历时钟时间。"
+            ),
+            "qc_exposure_date": previous.isoformat(),
+        }
+    following = target + timedelta(days=1)
+    return {
+        "label": "今天白天",
+        "range": f"{_display_date(target)}起床后 → 本次入睡前",
+        "explanation": (
+            f"指{_display_date(target)}这次起床后到本次入睡前的整个清醒时段。"
+            f"如果实际到{_display_date(following)}凌晨才入睡，入睡日历日是{_display_date(following)}，"
+            f"但这段清醒时间仍归入{_display_date(target)}实验日。"
+        ),
+        "qc_exposure_date": target.isoformat(),
+    }
 
 
 def _gps_state(participant_id: str) -> dict:
@@ -102,8 +145,10 @@ def portal_state(token: str) -> dict:
     subject = _resolve_subject(token)
     if not subject:
         raise LookupError("invalid participant link")
-    date_local, study_day, total_days = _study_clock(subject)
-    clocks = {definition["key"]: _form_clock(subject, definition["key"]) for definition in list_forms()}
+    local_now = datetime.now(ZoneInfo(settings.study_timezone))
+    definitions = list_forms()
+    assignments = {definition["key"]: form_assignment(subject, definition["key"], local_now) for definition in definitions}
+    active_assignment = assignments["evening"]
     with db() as conn:
         completed = {
             (r["form_key"], r["date_local"]): r["submitted_at_utc"]
@@ -113,26 +158,35 @@ def portal_state(token: str) -> dict:
             )
         }
     forms = []
-    for definition in list_forms():
+    for definition in definitions:
         key = definition["key"]
-        form_date, form_day, _ = clocks[key]
+        assignment = assignments[key]
+        target = date.fromisoformat(
+            assignment["calendar_date_local"] if key == "morning" else assignment["experiment_date_local"]
+        )
         forms.append({
             **definition,
             "version": FORM_VERSION,
-            "date_local": form_date,
-            "study_day": form_day,
-            "completed": (key, form_date) in completed,
-            "submitted_at_utc": completed.get((key, form_date)),
+            **assignment,
+            "time_scope": form_time_scope(key, target),
+            "completed": (key, assignment["date_local"]) in completed,
+            "submitted_at_utc": completed.get((key, assignment["date_local"])),
         })
+    exposure_date = form_target_date("evening", local_now)
+    lighting = light_service.portal_light_state(subject["participant_id"], exposure_date.isoformat())
+    lighting["date_local"] = exposure_date.isoformat()
+    lighting["time_scope"] = form_time_scope("evening", exposure_date)
     return {
         "study_title": "光迹计划（北京）",
         "portal_title": "LEHUE Study",
         "status": subject["status"],
-        "date_local": date_local,
-        "study_day": study_day,
-        "total_days": total_days,
+        "date_local": local_now.date().isoformat(),
+        "calendar_date_local": local_now.date().isoformat(),
+        "experiment_date_local": active_assignment["experiment_date_local"],
+        "study_day": active_assignment["study_day"],
+        "total_days": active_assignment["total_days"],
         "gps": _gps_state(subject["participant_id"]),
-        "lighting": light_service.portal_light_state(subject["participant_id"], date_local),
+        "lighting": lighting,
         "forms": forms,
         "notice": "这是 LEHUE 被试专属工作入口。链接本身用于识别身份，请勿转发给他人。",
     }
@@ -167,12 +221,7 @@ def submit_lighting_path(token: str, date_local: str, filename: str, path: Path)
     return light_service.store_upload_path(participant_id, date_local, filename, path, "participant_portal")
 
 
-def submit_lighting(token: str, date_local: str, filename: str, raw: bytes) -> dict:
-    participant_id = _lighting_participant(token, date_local)
-    return light_service.store_upload(participant_id, date_local, filename, raw, "participant_portal")
-
-
-def submit_questionnaire(token: str, form_key: str, answers: dict) -> dict:
+def submit_questionnaire(token: str, form_key: str, answers: dict, calendar_date_local: str = "") -> dict:
     subject = _resolve_subject(token)
     if not subject:
         raise LookupError("invalid participant link")
@@ -181,19 +230,25 @@ def submit_questionnaire(token: str, form_key: str, answers: dict) -> dict:
     form = get_form(form_key)
     if not form:
         raise LookupError("questionnaire not found")
-    date_local, study_day, _ = _form_clock(subject, form_key)
-    if study_day < 1:
-        raise ValueError("实验尚未开始")
+    local_now = datetime.now(ZoneInfo(settings.study_timezone))
+    try:
+        calendar_day = date.fromisoformat(calendar_date_local) if calendar_date_local else local_now.date()
+    except ValueError as exc:
+        raise ValueError("日历日必须使用 YYYY-MM-DD") from exc
+    assignment = form_assignment(subject, form_key, local_now, calendar_day)
+    if not 1 <= assignment["study_day"] <= assignment["total_days"]:
+        raise ValueError("所选日历日不在本次实验范围内")
     normalized = validate_answers(form, answers or {})
     submitted = now_iso()
     try:
         with db() as conn:
             conn.execute(
-                "INSERT INTO questionnaire_responses(participant_id,date_local,study_day,form_key,form_version,answers_json,submitted_at_utc) VALUES(?,?,?,?,?,?,?)",
+                "INSERT INTO questionnaire_responses(participant_id,date_local,calendar_date_local,study_day,form_key,form_version,answers_json,submitted_at_utc) VALUES(?,?,?,?,?,?,?,?)",
                 (
                     subject["participant_id"],
-                    date_local,
-                    study_day,
+                    assignment["date_local"],
+                    assignment["calendar_date_local"],
+                    assignment["study_day"],
                     form_key,
                     FORM_VERSION,
                     json.dumps(normalized, ensure_ascii=False, separators=(",", ":")),
@@ -201,5 +256,5 @@ def submit_questionnaire(token: str, form_key: str, answers: dict) -> dict:
                 ),
             )
     except sqlite3.IntegrityError as exc:
-        raise ValueError("今日该问卷已经提交，无需重复填写") from exc
-    return {"ok": True, "form_key": form_key, "date_local": date_local, "study_day": study_day, "submitted_at_utc": submitted}
+        raise ValueError("该实验日的这份问卷已经提交，无需重复填写") from exc
+    return {"ok": True, "form_key": form_key, **assignment, "submitted_at_utc": submitted}

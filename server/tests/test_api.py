@@ -1,7 +1,6 @@
 import base64
 import importlib
 import tempfile
-from pathlib import Path
 
 
 def test_end_to_end(monkeypatch):
@@ -9,8 +8,6 @@ def test_end_to_end(monkeypatch):
         monkeypatch.setenv("PROJECT_NAME", "LEHUE")
         monkeypatch.setenv("STUDY_TIMEZONE", "Asia/Shanghai")
         monkeypatch.setenv("DATA_DIR", td)
-        monkeypatch.setenv("DB_PATH", str(Path(td) / "test.sqlite3"))
-        monkeypatch.setenv("RAW_ARCHIVE_DIR", str(Path(td) / "raw"))
         monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
 
         import app.core.config as config

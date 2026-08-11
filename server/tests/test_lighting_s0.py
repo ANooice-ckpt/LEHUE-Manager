@@ -7,11 +7,8 @@ from zoneinfo import ZoneInfo
 
 def _reload(monkeypatch, td: str):
     monkeypatch.setenv("DATA_DIR", td)
-    monkeypatch.setenv("DB_PATH", str(Path(td) / "main.sqlite3"))
-    monkeypatch.setenv("IDENTITY_DB_PATH", str(Path(td) / "identity.sqlite3"))
-    monkeypatch.setenv("RAW_ARCHIVE_DIR", str(Path(td) / "raw" / "gps"))
-    monkeypatch.setenv("RAW_LIGHT_DIR", str(Path(td) / "raw" / "lighting"))
     monkeypatch.setenv("STUDY_TIMEZONE", "Asia/Shanghai")
+    monkeypatch.setenv("QUESTIONNAIRE_EVENING_CUTOFF_HOUR", "0")
     monkeypatch.setenv("QC_DAY_CLOSE_HOUR", "0")
 
     import app.core.config as config; importlib.reload(config)

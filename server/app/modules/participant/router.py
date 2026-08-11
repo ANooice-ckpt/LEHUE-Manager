@@ -29,7 +29,12 @@ def participant_state(portal_token: str):
 async def questionnaire_submit(portal_token: str, form_key: str, request: Request):
     data = await request.json()
     try:
-        return service.submit_questionnaire(portal_token, form_key, data.get("answers") or {})
+        return service.submit_questionnaire(
+            portal_token,
+            form_key,
+            data.get("answers") or {},
+            str(data.get("calendar_date_local") or ""),
+        )
     except LookupError:
         raise HTTPException(status_code=404, detail="Invalid or expired participant link")
     except ValueError as exc:

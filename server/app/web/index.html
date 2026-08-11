@@ -78,7 +78,7 @@
     <div class="card"><div class="section-head"><div><h2>异常记录</h2><div class="muted">仅区分未归档与已归档。</div></div></div><div id="incidentList" class="incident-list"></div></div>
   </section>
 
-  <section id="tab-sources" class="tabpage hidden"><div class="card"><div class="section-head"><div><h2>数据源</h2><div class="muted">采集入口、存储位置与自动化状态。</div></div></div><div class="source-grid" id="sourceGrid"></div></div><div class="card"><div class="section-head"><div><h2>系统架构</h2><div class="muted">运营系统与本地科研分析之间的边界。</div></div></div><div id="architectureView"></div></div></section>
+  <section id="tab-sources" class="tabpage hidden"><div class="card"><div class="section-head"><div><h2>数据源</h2><div class="muted">采集入口、存储位置与自动化状态。</div></div></div><div class="source-grid" id="sourceGrid"></div></div><div class="card"><div class="section-head"><div><h2>系统架构</h2><div class="muted">运营系统与本地科研分析之间的边界。</div></div></div><div class="arch-flow"><div class="node"><div class="k">People</div><strong>PI / RA · Participant</strong><span class="muted">管理端与专属工作入口</span></div><div class="flow-arrow">→</div><div class="node"><div class="k">Application</div><strong>LEHUE Web · FastAPI</strong><span class="muted">身份、任务、采集与基础 QC</span></div><div class="flow-arrow">→</div><div class="node"><div class="k">Data</div><strong>Identity · Operations · Raw</strong><span class="muted">身份分离，原始数据独立保存</span></div><div class="flow-arrow">→</div><div class="node"><div class="k">Research</div><strong>Local workstation</strong><span class="muted">科研 QC 与统计分析</span></div></div><div class="callout architecture-boundary"><strong>系统边界</strong><span class="muted">云端负责实验运营与被试任务，科研 QC 和统计分析保留在本地。</span></div></div></section>
 
   <section id="tab-system" class="tabpage hidden">
     <div class="split">

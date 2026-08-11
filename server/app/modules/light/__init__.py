@@ -1,1 +1,1 @@
-"""Reserved for future spectral-light ingestion and OSS integration."""
+"""Lighting ingestion, storage, and acquisition QC."""

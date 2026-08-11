@@ -1,1 +1,1 @@
-"""Reserved for future study-operations synchronization."""
+"""Admin Web API and study operations."""

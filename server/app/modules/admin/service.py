@@ -128,11 +128,10 @@ def import_s0_file(data: dict[str, Any], operator: str) -> dict:
 def add_candidate(data: dict[str, Any], operator: str):
     uid = data.get("candidate_uid") or f"cand_{secrets.token_hex(6)}"
     now = now_iso()
-    fields = ["name","phone","wechat","source","sex","age_group","identity_type","light_type","work_district","home_district","phone_os","pickup_method","availability","notes"]
-    values = [str(data.get(f) or "").strip() for f in fields]
+    values = [str(data.get(field) or "").strip() for field in CANDIDATE_EDIT_FIELDS]
     with identity_db() as conn:
         conn.execute(
-            f"INSERT INTO candidates(candidate_uid,{','.join(fields)},created_at_utc,updated_at_utc) VALUES(?{',?'*len(fields)},?,?)",
+            f"INSERT INTO candidates(candidate_uid,{','.join(CANDIDATE_EDIT_FIELDS)},created_at_utc,updated_at_utc) VALUES(?{',?'*len(CANDIDATE_EDIT_FIELDS)},?,?)",
             [uid, *values, now, now],
         )
     audit(operator, "candidate.create", "candidate", uid)
@@ -326,7 +325,7 @@ def start_subject(participant_id: str, data: dict[str, Any], operator: str):
 
 def list_incidents():
     with db() as conn:
-        return [dict(r) for r in conn.execute("SELECT * FROM incidents ORDER BY CASE status WHEN 'open' THEN 0 WHEN 'handling' THEN 1 ELSE 2 END, updated_at_utc DESC")]
+        return [dict(r) for r in conn.execute("SELECT * FROM incidents ORDER BY status='closed', updated_at_utc DESC")]
 
 
 def add_incident(data: dict[str, Any], operator: str):
@@ -336,38 +335,20 @@ def add_incident(data: dict[str, Any], operator: str):
         conn.execute(
             """INSERT INTO incidents(incident_uid,participant_id,date_local,source,incident_type,severity,status,assigned_ra,summary,notes,created_at_utc,updated_at_utc)
                VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (uid,str(data.get("participant_id") or ""),str(data.get("date_local") or ""),str(data.get("source") or "manual"),str(data.get("incident_type") or "other"),str(data.get("severity") or "normal"),str(data.get("status") or "open"),str(data.get("assigned_ra") or ""),str(data.get("summary") or ""),str(data.get("notes") or ""),now,now),
+            (uid,str(data.get("participant_id") or ""),str(data.get("date_local") or ""),str(data.get("source") or "manual"),str(data.get("incident_type") or "other"),str(data.get("severity") or "normal"),"open",str(data.get("assigned_ra") or ""),str(data.get("summary") or ""),str(data.get("notes") or ""),now,now),
         )
     audit(operator, "incident.create", "incident", uid)
     return uid
 
 
 def update_incident_status(uid: str, status: str, operator: str):
-    if status not in {"open","handling","resolved","closed"}:
+    if status not in {"open", "closed"}:
         raise ValueError("invalid incident status")
     with db() as conn:
         if not conn.execute("SELECT 1 FROM incidents WHERE incident_uid=?", (uid,)).fetchone():
             raise ValueError("incident not found")
         conn.execute("UPDATE incidents SET status=?,updated_at_utc=? WHERE incident_uid=?", (status,now_iso(),uid))
     audit(operator, "incident.status", "incident", uid, {"status":status})
-
-
-def architecture() -> dict[str, Any]:
-    return {
-        "layers": [
-            {"id":"operators","label":"PI / RA Admin","kind":"people"},
-            {"id":"participants","label":"Participant Portal /p/<token>","kind":"people"},
-            {"id":"api","label":"FastAPI backend","kind":"service"},
-            {"id":"gps","label":"GPS / OwnTracks","kind":"source"},
-            {"id":"questionnaire","label":"LEHUE native questionnaire","kind":"source"},
-            {"id":"light","label":"Lighting upload + acquisition QC","kind":"source"},
-            {"id":"ax3","label":"AX3 return + local import (reserved)","kind":"source"},
-            {"id":"identity","label":"Identity DB","kind":"storage"},
-            {"id":"study","label":"Operations + GPS + Questionnaire DB","kind":"storage"},
-            {"id":"local","label":"Local scientific workstation","kind":"external"},
-        ],
-        "principle":"Cloud handles study operations and native participant tasks; scientific analysis stays local."
-    }
 
 
 def data_sources() -> list[dict[str, Any]]:
@@ -388,12 +369,6 @@ def data_sources() -> list[dict[str, Any]]:
 
 def list_lighting_uploads(participant_id: str = "", date_local: str = ""):
     return light_service.list_uploads(participant_id, date_local)
-
-
-def upload_lighting(participant_id: str, date_local: str, filename: str, raw: bytes, operator: str):
-    result = light_service.store_upload(participant_id, date_local, filename, raw, f"admin:{operator}")
-    audit(operator, "lighting.upload", "lighting_file", result["upload_uid"], {"participant_id": participant_id, "date_local": date_local, "quality": result["quality"]})
-    return result
 
 
 def upload_lighting_path(participant_id: str, date_local: str, filename: str, path: Path, operator: str):

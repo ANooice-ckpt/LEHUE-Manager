@@ -3,14 +3,10 @@ import io
 import base64
 import tempfile
 import zipfile
-from pathlib import Path
 
 
 def _reload_stack(monkeypatch, td: str, domain: str = "localhost"):
     monkeypatch.setenv("DATA_DIR", td)
-    monkeypatch.setenv("DB_PATH", str(Path(td) / "main.sqlite3"))
-    monkeypatch.setenv("IDENTITY_DB_PATH", str(Path(td) / "identity.sqlite3"))
-    monkeypatch.setenv("RAW_ARCHIVE_DIR", str(Path(td) / "raw"))
     monkeypatch.setenv("ADMIN_TOKEN", "admin-token-for-test")
     monkeypatch.setenv("DOMAIN", domain)
 
@@ -114,10 +110,21 @@ def test_web_admin_flow(monkeypatch):
             assert len(client.get('/api/v1/web/lighting').json()) == 1
             assert client.get('/api/v1/web/daily-qc').status_code == 200
             assert client.post('/api/v1/web/incidents', json={'participant_id':'001','date_local':'2026-09-02','source':'GPS','incident_type':'offline','summary':'GPS offline'}, headers=h).status_code == 200
+            incident_uid = client.get('/api/v1/web/incidents').json()[0]['incident_uid']
+            assert client.post(f'/api/v1/web/incidents/{incident_uid}/status', json={'status':'handling'}, headers=h).status_code == 400
+            with dbmod.db() as conn:
+                conn.execute("UPDATE incidents SET status='handling' WHERE incident_uid=?", (incident_uid,))
+            dbmod.init_db()
+            assert client.get('/api/v1/web/incidents').json()[0]['status'] == 'open'
+            with dbmod.db() as conn:
+                conn.execute("UPDATE incidents SET status='resolved' WHERE incident_uid=?", (incident_uid,))
+            dbmod.init_db()
+            assert client.get('/api/v1/web/incidents').json()[0]['status'] == 'closed'
+            assert client.post(f'/api/v1/web/incidents/{incident_uid}/status', json={'status':'closed'}, headers=h).status_code == 200
+            assert client.post(f'/api/v1/web/incidents/{incident_uid}/status', json={'status':'open'}, headers=h).status_code == 200
             d = client.get('/api/v1/web/dashboard').json()
             assert d['metrics']['running'] == 1 and d['metrics']['open_incidents'] == 1
             assert client.get('/api/v1/web/data-sources').status_code == 200
-            assert client.get('/api/v1/web/architecture').status_code == 200
             assert client.get('/admin').status_code == 200
             assert client.get('/admin/vendor/leaflet.css').status_code == 200
             assert client.get('/admin/vendor/leaflet.js').status_code == 200
