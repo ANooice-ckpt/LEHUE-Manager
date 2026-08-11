@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from app.core.config import settings
 from app.core.db import db
 from app.core.security import encrypt_credential, hash_secret, verify_secret
+from app.modules.gps import service as gps_service
 from app.modules.light import service as light_service
 from app.modules.questionnaire import FORM_VERSION, get_form, list_forms, validate_answers
 
@@ -79,22 +80,7 @@ def _gps_state(participant_id: str) -> dict:
             "SELECT MAX(received_at_utc) AS x FROM gps_locations WHERE participant_id=?",
             (participant_id,),
         ).fetchone()["x"]
-    if not last:
-        return {"status": "never", "last_received_at_utc": None, "seconds_since_last": None}
-    try:
-        parsed = datetime.fromisoformat(last.replace("Z", "+00:00"))
-        age = max(0, int((datetime.now(timezone.utc) - parsed).total_seconds()))
-    except ValueError:
-        age = None
-    if age is None:
-        status = "unknown"
-    elif age <= 600:
-        status = "live"
-    elif age <= 3600:
-        status = "stale"
-    else:
-        status = "offline"
-    return {"status": status, "last_received_at_utc": last, "seconds_since_last": age}
+    return gps_service.online_state(last)
 
 
 def portal_state(token: str) -> dict:

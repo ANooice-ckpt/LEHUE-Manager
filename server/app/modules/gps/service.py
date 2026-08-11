@@ -63,7 +63,8 @@ def authenticate_participant(participant_id: str, secret: str) -> bool:
 
 
 def _append_raw_archive(record: dict[str, Any], received: datetime) -> bool:
-    path = settings.raw_archive_dir / received.strftime("%Y-%m-%d.jsonl")
+    study_day = received.astimezone(ZoneInfo(settings.study_timezone)).strftime("%Y-%m-%d")
+    path = settings.raw_archive_dir / f"{study_day}.jsonl"
     line = json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -185,6 +186,96 @@ def participant_exists(participant_id: str) -> bool:
     with db() as conn:
         row = conn.execute("SELECT 1 FROM participants WHERE participant_id=?", (participant_id,)).fetchone()
     return row is not None
+
+
+def online_state(last_received_at_utc: str | None, now: datetime | None = None) -> dict[str, Any]:
+    if not last_received_at_utc:
+        return {"status": "never", "last_received_at_utc": None, "seconds_since_last": None}
+    try:
+        parsed = datetime.fromisoformat(last_received_at_utc.replace("Z", "+00:00"))
+        age = max(0, int(((now or utc_now()) - parsed).total_seconds()))
+    except ValueError:
+        age = None
+    if age is None:
+        status = "unknown"
+    elif age <= 600:
+        status = "live"
+    elif age <= 3600:
+        status = "stale"
+    else:
+        status = "offline"
+    return {"status": status, "last_received_at_utc": last_received_at_utc, "seconds_since_last": age}
+
+
+TRACK_SAMPLE_SECONDS = {1: 10, 12: 30, 24: 50}
+
+
+def track_diagnostic(participant_id: str, hours: int, now: datetime | None = None) -> dict[str, Any]:
+    if hours not in TRACK_SAMPLE_SECONDS:
+        raise ValueError("hours must be 1, 12 or 24")
+    end = (now or utc_now()).astimezone(timezone.utc)
+    start = end - timedelta(hours=hours)
+    sample_seconds = TRACK_SAMPLE_SECONDS[hours]
+    points: list[dict[str, Any]] = []
+    total = 0
+    poor = 0
+    accuracy_count = 0
+    max_gap = 0.0
+    previous_time: datetime | None = None
+    last_display_time: datetime | None = None
+    last_row: dict[str, Any] | None = None
+    pending_break = False
+
+    with db() as conn:
+        rows = conn.execute(
+            """SELECT recorded_at_utc,lat,lon,accuracy_m
+               FROM gps_locations
+               WHERE participant_id=? AND recorded_at_utc>=? AND recorded_at_utc<=?
+               ORDER BY recorded_at_utc""",
+            (participant_id, iso_utc(start), iso_utc(end)),
+        )
+        for row in rows:
+            recorded = datetime.fromisoformat(row["recorded_at_utc"].replace("Z", "+00:00"))
+            total += 1
+            if row["accuracy_m"] is not None:
+                accuracy_count += 1
+                poor += int(float(row["accuracy_m"]) > settings.qc_poor_accuracy_m)
+            if previous_time is not None:
+                gap = max(0.0, (recorded - previous_time).total_seconds())
+                max_gap = max(max_gap, gap)
+                if gap > settings.qc_gap_warning_seconds:
+                    pending_break = True
+            point = {
+                "recorded_at_utc": row["recorded_at_utc"],
+                "lat": row["lat"],
+                "lon": row["lon"],
+                "break_before": pending_break,
+            }
+            if last_display_time is None or (recorded - last_display_time).total_seconds() >= sample_seconds:
+                points.append(point)
+                last_display_time = recorded
+                pending_break = False
+            previous_time = recorded
+            last_row = point
+
+    if last_row is not None and (not points or points[-1]["recorded_at_utc"] != last_row["recorded_at_utc"]):
+        last_row["break_before"] = pending_break
+        points.append(last_row)
+
+    return {
+        "participant_id": participant_id,
+        "window_hours": hours,
+        "latest_recorded_at_utc": last_row["recorded_at_utc"] if last_row else None,
+        "total_point_count": total,
+        "max_gap_seconds": round(max_gap, 1),
+        "poor_accuracy_percentage": round(poor / accuracy_count * 100, 1) if accuracy_count else None,
+        "points": points,
+        "gap_warning_seconds": settings.qc_gap_warning_seconds,
+        "map": {
+            "tile_url": settings.gps_tile_url,
+            "attribution": settings.gps_tile_attribution,
+        },
+    }
 
 
 def qc_summary(participant_id: str, date_str: str | None = None) -> dict[str, Any]:

@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>LEHUE Manager</title>
+  <link rel="stylesheet" href="/admin/vendor/leaflet.css">
   <link rel="stylesheet" href="/admin/style.css">
 </head>
 <body>
@@ -54,7 +55,7 @@
   </section>
 
   <section id="tab-subjects" class="tabpage hidden">
-    <div class="card"><h2>被试运行管理</h2><div class="muted" style="margin-bottom:10px">每个正式被试可生成一个专属工作入口。入口链接本身就是被试身份凭据；重置入口会立即使旧链接失效。</div><div class="table-wrap"><table><thead><tr><th>ID</th><th>姓名</th><th>状态</th><th>计划/实际日期</th><th>设备包</th><th>负责RA</th><th>GPS最近回传</th><th>今日问卷</th><th>今日 Lighting</th><th>工作入口</th><th>操作</th></tr></thead><tbody id="subjectRows"></tbody></table></div></div>
+    <div class="card"><h2>被试运行管理</h2><div class="muted" style="margin-bottom:10px">每个正式被试可生成一个专属工作入口。入口链接本身就是被试身份凭据；重置入口会立即使旧链接失效。</div><div class="table-wrap"><table><thead><tr><th>ID</th><th>姓名</th><th>状态</th><th>计划/实际日期</th><th>设备包</th><th>负责RA</th><th>GPS 状态 / 最近回传</th><th>今日问卷</th><th>今日 Lighting</th><th>工作入口</th><th>操作</th></tr></thead><tbody id="subjectRows"></tbody></table></div></div>
   </section>
 
   <section id="tab-candidates" class="tabpage hidden">
@@ -99,7 +100,9 @@
 <dialog id="promoteDialog"><div class="dialog-body"><h2>赋 ID 并预约</h2><div class="dialog-grid"><label>正式三位数 ID<input id="pId" placeholder="006"></label><label>批次<input id="pBatch"></label><label>计划开始<input id="pStart" type="date"></label><label>计划结束<input id="pEnd" type="date"></label><label>设备包（可空）<input id="pPack"></label><label>负责 RA<input id="pRa"></label></div><div class="form-actions"><button class="btn" data-close="promoteDialog">取消</button><button class="btn primary" id="promoteSubmit">创建预约</button></div></div></dialog>
 <dialog id="startDialog"><div class="dialog-body"><h2>启动运行</h2><div class="dialog-grid"><label>设备包<input id="sPack"></label><label>正式开始<input id="sStart" type="date"></label><label>预期结束<input id="sEnd" type="date"></label></div><div class="form-actions"><button class="btn" data-close="startDialog">取消</button><button class="btn primary" id="startSubmit">启动</button></div></div></dialog>
 <dialog id="credentialDialog"><div class="dialog-body"><h2 id="credentialTitle">被试凭据</h2><div class="dialog-grid"><label class="full">OwnTracks HTTP 地址<div class="row"><input id="credGpsUrl" class="mono" readonly style="flex:1"><button class="btn small" data-copy-credential="credGpsUrl">复制</button></div></label><label>OwnTracks Username<div class="row"><input id="credGpsUser" class="mono" readonly style="flex:1"><button class="btn small" data-copy-credential="credGpsUser">复制</button></div></label><label>OwnTracks Password<div class="row"><input id="credGpsPassword" class="mono" readonly style="flex:1"><button class="btn small" data-copy-credential="credGpsPassword">复制</button></div></label><div id="credGpsHint" class="muted full"></div><div class="form-actions full"><button class="btn" id="credGpsRotate">生成 GPS 密码</button></div><label class="full">被试工作入口<div class="row"><input id="credPortal" class="mono" readonly style="flex:1"><button class="btn small" data-copy-credential="credPortal">复制</button></div></label><div id="credPortalHint" class="muted full"></div></div><div class="form-actions"><button class="btn" id="credPortalRotate">生成工作入口</button><button class="btn primary" data-close="credentialDialog">完成</button></div></div></dialog>
+<dialog id="gpsTrackDialog" class="map-dialog"><div class="dialog-body"><div class="row map-dialog-head"><div><h2 id="gpsTrackTitle">GPS 轨迹</h2><div id="gpsTrackWindow" class="muted"></div></div><div class="track-ranges"><button class="btn small" data-track-hours="1">1 h</button><button class="btn small" data-track-hours="12">12 h</button><button class="btn small" data-track-hours="24">24 h</button></div></div><div class="track-stats"><div><span>最新记录</span><strong id="trackLatest">—</strong></div><div><span>点数</span><strong id="trackCount">—</strong></div><div><span>最大间隔</span><strong id="trackGap">—</strong></div><div><span>低精度</span><strong id="trackPoor">—</strong></div></div><div id="gpsTrackMessage" class="muted track-message">正在读取轨迹…</div><div id="gpsTrackMap" aria-label="GPS 轨迹地图"></div><div class="form-actions"><button class="btn primary" data-close="gpsTrackDialog">关闭</button></div></div></dialog>
 <div class="toast" id="toast"></div>
+<script src="/admin/vendor/leaflet.js"></script>
 <script src="/admin/app.js"></script>
 </body>
 </html>

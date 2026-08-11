@@ -15,6 +15,7 @@ from app.core.db import db
 from app.core.identity_db import identity_db
 from app.core.security import decrypt_credential, encrypt_credential, generate_secret, hash_secret
 from app.modules.participant import service as participant_service
+from app.modules.gps import service as gps_service
 from app.modules.questionnaire import s0_import
 from app.modules.light import service as light_service
 
@@ -128,8 +129,16 @@ def list_subjects():
     with db() as conn:
         rows = [dict(r) for r in conn.execute("SELECT * FROM study_subjects ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'scheduled' THEN 1 ELSE 2 END, participant_id")]
         counts = _questionnaire_counts(conn, [r["participant_id"] for r in rows], today)
+        gps_last = {
+            r["participant_id"]: r["last_received_at_utc"]
+            for r in conn.execute(
+                "SELECT participant_id,MAX(received_at_utc) last_received_at_utc FROM gps_locations GROUP BY participant_id"
+            )
+        }
         for row in rows:
-            row["gps_last_received_at_utc"] = conn.execute("SELECT MAX(received_at_utc) x FROM gps_locations WHERE participant_id=?", (row["participant_id"],)).fetchone()["x"]
+            gps = gps_service.online_state(gps_last.get(row["participant_id"]))
+            row["gps_status"] = gps["status"]
+            row["gps_last_received_at_utc"] = gps["last_received_at_utc"]
             row["questionnaire_today_completed"] = counts.get(row["participant_id"], 0)
             row["lighting_today"] = light_service.portal_light_state(row["participant_id"], today)
             row["portal_enabled"] = bool(row.get("portal_token_id"))
@@ -140,6 +149,13 @@ def list_subjects():
     for row in rows:
         row.update(names.get(row["participant_id"], {}))
     return rows
+
+
+def gps_track(participant_id: str, hours: int) -> dict[str, Any]:
+    with db() as conn:
+        if not conn.execute("SELECT 1 FROM study_subjects WHERE participant_id=?", (participant_id,)).fetchone():
+            raise LookupError("participant not found")
+    return gps_service.track_diagnostic(participant_id, hours)
 
 
 def promote_candidate(candidate_uid: str, data: dict[str, Any], operator: str):

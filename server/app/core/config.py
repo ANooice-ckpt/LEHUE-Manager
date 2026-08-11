@@ -107,6 +107,12 @@ class Settings:
     qc_gap_warning_seconds: int = _int("QC_GAP_WARNING_SECONDS", 300)
     qc_delay_warning_seconds: int = _int("QC_DELAY_WARNING_SECONDS", 120)
     qc_poor_accuracy_m: int = _int("QC_POOR_ACCURACY_M", 50)
+    gps_tile_url: str = os.getenv(
+        "GPS_TILE_URL", "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+    ).strip()
+    gps_tile_attribution: str = os.getenv(
+        "GPS_TILE_ATTRIBUTION", "&copy; OpenStreetMap contributors"
+    ).strip()
 
     def __post_init__(self) -> None:
         if self.light_storage_backend != "oss":

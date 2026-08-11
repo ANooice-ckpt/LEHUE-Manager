@@ -26,6 +26,7 @@ from .backup import create_system_backup
 router = APIRouter()
 WEB_ROOT = Path(__file__).resolve().parents[2] / "web"
 INDEX = WEB_ROOT / "index.html"
+LEAFLET_ROOT = WEB_ROOT / "vendor" / "leaflet-1.9.4"
 
 
 def _is_local_request(request: Request) -> bool:
@@ -57,6 +58,16 @@ def admin_css():
 @router.get("/admin/app.js")
 def admin_js():
     return FileResponse(WEB_ROOT / "app.js", media_type="application/javascript")
+
+
+@router.get("/admin/vendor/leaflet.css")
+def leaflet_css():
+    return FileResponse(LEAFLET_ROOT / "leaflet.css", media_type="text/css")
+
+
+@router.get("/admin/vendor/leaflet.js")
+def leaflet_js():
+    return FileResponse(LEAFLET_ROOT / "leaflet.js", media_type="application/javascript")
 
 
 @router.get("/api/v1/web/setup-status")
@@ -206,6 +217,16 @@ async def promote(candidate_uid: str, request: Request, operator=Depends(require
 @router.get("/api/v1/web/subjects")
 def subjects(operator=Depends(require_operator)):
     return service.list_subjects()
+
+
+@router.get("/api/v1/web/subjects/{participant_id}/gps-track")
+def subject_gps_track(participant_id: str, hours: int = 12, operator=Depends(require_operator)):
+    try:
+        return service.gps_track(participant_id, hours)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.post("/api/v1/web/subjects/{participant_id}/gps-credential")

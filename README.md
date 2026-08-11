@@ -121,3 +121,16 @@ server\.venv\Scripts\python.exe -m pytest server\tests\test_light_storage.py -q
 `OSS_ENDPOINT` 可选；不设置时由 `OSS_REGION` 生成公网 endpoint。ECS 若使用内网 endpoint，应显式设置 `OSS_ENDPOINT`。AccessKey 只放在服务器 `.env` 或部署平台的 secret store，不写入代码或 Git。
 
 PROD 默认选择并强制要求 `LIGHT_STORAGE_BACKEND=oss`。TEST 与 PROD 必须使用不同的 bucket、RAM 凭据和 SQLite 数据目录；PROD 凭据不要授予 TEST bucket 权限。
+
+## Admin GPS 轨迹诊断
+
+“被试运行”列表只显示现有 GPS 在线状态、最后回传时间和“轨迹”按钮，不在列表加载时运行完整 GPS QC。轨迹 dialog 支持最近 1 h / 12 h / 24 h，数据只查询 `gps_locations`；endpoint 在一次按时间扫描中同时计算最新记录、总点数、最大间隔和低精度百分比，并完成显示降采样。超过 `QC_GAP_WARNING_SECONDS` 的时段不会用折线跨接。
+
+Leaflet 1.9.4 已保存在 `server/app/web/vendor/leaflet-1.9.4/`，不依赖运行时 CDN。底图可以在 `.env` 中替换：
+
+```env
+GPS_TILE_URL=https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png
+GPS_TILE_ATTRIBUTION=&copy; OpenStreetMap contributors
+```
+
+GPS raw JSONL 文件名按 `STUDY_TIMEZONE` 的自然日生成；JSONL 内部的 `server_received_at_utc` 等时间仍保持 UTC。

@@ -1,4 +1,5 @@
-let csrf = '', me = null, activeTab = 'overview', selectedCandidate = '', selectedSubject = '', selectedCredentialSubject = '';
+let csrf = '', me = null, activeTab = 'overview', selectedCandidate = '', selectedSubject = '', selectedCredentialSubject = '', selectedTrackSubject = '';
+let gpsTrackMap = null, gpsTrackLayers = null, gpsTrackTile = null, gpsTrackHours = 12;
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -6,6 +7,7 @@ function toast(msg){const t=$('toast');t.textContent=msg;t.classList.add('show')
 async function api(url,opts={}){opts.headers={...(opts.headers||{})};if(opts.body&&!opts.headers['Content-Type'])opts.headers['Content-Type']='application/json';if(opts.method&&opts.method!=='GET'&&csrf)opts.headers['X-CSRF-Token']=csrf;const r=await fetch(url,opts);let data=null;try{data=await r.json()}catch{}if(!r.ok)throw new Error(data?.detail||`HTTP ${r.status}`);return data}
 function badge(v){const map={running:['运行中','ok'],scheduled:['已预约','info'],completed:['完成',''],closed:['完成',''],canceled:['取消',''],available:['可用','ok'],repair:['维修','warn'],disabled:['停用','danger'],open:['待处理','danger'],handling:['处理中','warn'],resolved:['已解决','ok'],connected:['已接入','ok'],reserved:['预留','info'],manual:['人工链路','warn'],offline:['离线导入',''],pi:['PI','info'],ra:['RA',''],active:['启用','ok'],inactive:['禁用','danger'],ok:['完整','ok'],missing:['缺失','danger'],pending:['待完成','warn'],valid:['有效','ok'],insufficient:['样本不足','warn'],unreadable:['无法解析','danger']};const x=map[v]||[v||'—',''];return `<span class="badge ${x[1]}">${esc(x[0])}</span>`}
 function fmtTime(s){if(!s)return '—';try{return new Date(s).toLocaleString('zh-CN',{hour12:false})}catch{return s}}
+function gpsBadge(v){const map={live:['在线','ok'],stale:['延迟','warn'],offline:['离线','danger'],never:['无数据',''],unknown:['未知','warn']};const x=map[v]||map.unknown;return `<span class="badge ${x[1]}">${x[0]}</span>`}
 
 function showAuth(which){$('setupView').classList.toggle('hidden',which!=='setup');$('loginView').classList.toggle('hidden',which!=='login');$('appView').classList.add('hidden')}
 function showTab(name){if(name==='system'&&me?.role!=='pi')return;activeTab=name;document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.tab===name));document.querySelectorAll('.tabpage').forEach(x=>x.classList.add('hidden'));$('tab-'+name).classList.remove('hidden');loadTab(name)}
@@ -33,9 +35,35 @@ async function promote(){const body={participant_id:$('pId').value,batch_id:$('p
 
 async function renderSubjects(){
   const a=await api('/api/v1/web/subjects');
-  $('subjectRows').innerHTML=a.map(x=>`<tr><td><strong>${esc(x.participant_id)}</strong></td><td>${esc(x.name||'—')}<br><span class="muted">${esc(x.phone||'')}</span></td><td>${badge(x.status)}</td><td>${esc(x.start_date||x.expected_start||'—')} → ${esc(x.end_date||x.expected_end||'—')}</td><td>${esc(x.pack_id||'—')}</td><td>${esc(x.assigned_ra||'—')}</td><td>${x.gps_last_received_at_utc?fmtTime(x.gps_last_received_at_utc):'暂无'}</td><td>${x.questionnaire_today_completed||0}/2</td><td>${x.lighting_today?.uploaded?`${badge(x.lighting_today.quality)} ${x.lighting_today.valid_pct??''}%`:'未上传'}</td><td>${x.portal_enabled?badge('connected'):'未生成'}</td><td><div class="row">${x.status==='scheduled'?`<button class="btn small" data-start="${x.participant_id}" data-pack="${esc(x.pack_id)}">启动</button>`:''}<button class="btn small" data-credentials="${x.participant_id}">查看凭据</button></div></td></tr>`).join('');
+  $('subjectRows').innerHTML=a.map(x=>`<tr><td><strong>${esc(x.participant_id)}</strong></td><td>${esc(x.name||'—')}<br><span class="muted">${esc(x.phone||'')}</span></td><td>${badge(x.status)}</td><td>${esc(x.start_date||x.expected_start||'—')} → ${esc(x.end_date||x.expected_end||'—')}</td><td>${esc(x.pack_id||'—')}</td><td>${esc(x.assigned_ra||'—')}</td><td>${gpsBadge(x.gps_status)} <span class="muted">${x.gps_last_received_at_utc?fmtTime(x.gps_last_received_at_utc):'暂无回传'}</span><br><button class="btn small" data-gps-track="${esc(x.participant_id)}">轨迹</button></td><td>${x.questionnaire_today_completed||0}/2</td><td>${x.lighting_today?.uploaded?`${badge(x.lighting_today.quality)} ${x.lighting_today.valid_pct??''}%`:'未上传'}</td><td>${x.portal_enabled?badge('connected'):'未生成'}</td><td><div class="row">${x.status==='scheduled'?`<button class="btn small" data-start="${x.participant_id}" data-pack="${esc(x.pack_id)}">启动</button>`:''}<button class="btn small" data-credentials="${x.participant_id}">查看凭据</button></div></td></tr>`).join('');
   document.querySelectorAll('[data-start]').forEach(b=>b.addEventListener('click',()=>openStart(b.dataset.start,b.dataset.pack)));
   document.querySelectorAll('[data-credentials]').forEach(b=>b.addEventListener('click',()=>openCredentials(b.dataset.credentials)));
+  document.querySelectorAll('[data-gps-track]').forEach(b=>b.addEventListener('click',()=>openGpsTrack(b.dataset.gpsTrack)));
+}
+function formatGap(seconds){if(seconds===null||seconds===undefined)return '—';return seconds>=60?`${(seconds/60).toFixed(1)} min`:`${Number(seconds).toFixed(0)} s`}
+function ensureGpsMap(config){
+  if(!gpsTrackMap){gpsTrackMap=L.map('gpsTrackMap',{preferCanvas:true});gpsTrackLayers=L.layerGroup().addTo(gpsTrackMap)}
+  if(!gpsTrackTile)gpsTrackTile=L.tileLayer(config.tile_url,{attribution:config.attribution,maxZoom:19}).addTo(gpsTrackMap);
+}
+async function openGpsTrack(pid){selectedTrackSubject=pid;gpsTrackHours=12;$('gpsTrackTitle').textContent=`被试 ${pid} · GPS 轨迹`;if(!$('gpsTrackDialog').open)$('gpsTrackDialog').showModal();await loadGpsTrack(gpsTrackHours)}
+async function loadGpsTrack(hours){
+  if(!selectedTrackSubject)return;gpsTrackHours=Number(hours);document.querySelectorAll('[data-track-hours]').forEach(b=>b.classList.toggle('active',Number(b.dataset.trackHours)===gpsTrackHours));
+  $('gpsTrackMessage').className='muted track-message';$('gpsTrackMessage').textContent='正在读取轨迹…';
+  try{
+    const data=await api(`/api/v1/web/subjects/${encodeURIComponent(selectedTrackSubject)}/gps-track?hours=${gpsTrackHours}`);
+    $('trackLatest').textContent=fmtTime(data.latest_recorded_at_utc);$('trackCount').textContent=String(data.total_point_count);$('trackGap').textContent=formatGap(data.max_gap_seconds);$('trackPoor').textContent=data.poor_accuracy_percentage===null?'—':`${data.poor_accuracy_percentage.toFixed(1)}%`;
+    $('gpsTrackWindow').textContent=`最近 ${data.window_hours} h · 显示 ${data.points.length} / ${data.total_point_count} 点`;
+    ensureGpsMap(data.map);gpsTrackLayers.clearLayers();
+    if(!data.points.length){$('gpsTrackMessage').textContent='该时间窗内没有 GPS 位置记录';gpsTrackMap.setView([39.9,116.4],10);setTimeout(()=>gpsTrackMap.invalidateSize(),0);return}
+    const segments=[];let segment=[];
+    for(const point of data.points){if(point.break_before&&segment.length){segments.push(segment);segment=[]}segment.push([point.lat,point.lon])}if(segment.length)segments.push(segment);
+    segments.filter(x=>x.length>1).forEach(x=>L.polyline(x,{color:'#2563a6',weight:4,opacity:.85}).addTo(gpsTrackLayers));
+    const first=data.points[0],latest=data.points[data.points.length-1];
+    L.circleMarker([first.lat,first.lon],{radius:6,color:'#fff',weight:2,fillColor:'#23834a',fillOpacity:1}).bindTooltip('起点').addTo(gpsTrackLayers);
+    L.circleMarker([latest.lat,latest.lon],{radius:7,color:'#fff',weight:2,fillColor:'#c43d3d',fillOpacity:1}).bindTooltip('最新点').addTo(gpsTrackLayers);
+    const bounds=L.latLngBounds(data.points.map(x=>[x.lat,x.lon]));bounds.isValid()&&data.points.length>1?gpsTrackMap.fitBounds(bounds,{padding:[24,24],maxZoom:17}):gpsTrackMap.setView([latest.lat,latest.lon],16);
+    $('gpsTrackMessage').textContent=data.max_gap_seconds>data.gap_warning_seconds?`超过 ${data.gap_warning_seconds} s 的缺失时段已断开显示`:'轨迹连续时段已按时间连接';setTimeout(()=>gpsTrackMap.invalidateSize(),0);
+  }catch(e){$('gpsTrackMessage').className='track-message error';$('gpsTrackMessage').textContent=e.message}
 }
 async function openCredentials(pid){selectedCredentialSubject=pid;const x=await api(`/api/v1/web/subjects/${pid}/credentials`);$('credentialTitle').textContent=`被试 ${pid} 凭据`;$('credGpsUrl').value=`${location.origin}/api/v1/gps/owntracks`;$('credGpsUser').value=pid;$('credGpsPassword').value=x.gps_password||'';$('credPortal').value=x.portal_path?location.origin+x.portal_path:'';$('credGpsHint').textContent=x.gps_exists&&!x.gps_password?'旧 GPS 密码无法恢复，请重置一次。':x.gps_password?'可随时复制；重置后旧密码立即失效。':'尚未生成。';$('credPortalHint').textContent=x.portal_exists&&!x.portal_path?'旧工作入口无法恢复，请重置一次。':x.portal_path?'可随时复制；重置后旧链接立即失效。':'尚未生成。';$('credGpsRotate').textContent=x.gps_exists?'重置 GPS 密码':'生成 GPS 密码';$('credPortalRotate').textContent=x.portal_exists?'重置工作入口':'生成工作入口';if(!$('credentialDialog').open)$('credentialDialog').showModal()}
 async function rotateGps(){if(!confirm(`为 ${selectedCredentialSubject} 生成新的 GPS 密码？已有密码会立即失效。`))return;await api(`/api/v1/web/subjects/${selectedCredentialSubject}/gps-credential`,{method:'POST',body:'{}'});await openCredentials(selectedCredentialSubject)}
@@ -65,5 +93,6 @@ function downloadBackup(){location.href='/api/v1/web/backup'}
 
 $('setupBtn').addEventListener('click',firstSetup);$('loginBtn').addEventListener('click',login);$('logoutBtn').addEventListener('click',logout);$('refreshBtn').addEventListener('click',()=>loadTab(activeTab));$('addCandidateBtn').addEventListener('click',addCandidate);$('importS0Btn').addEventListener('click',importS0);$('runQcBtn').addEventListener('click',runDailyQc);$('saveDeviceBtn').addEventListener('click',saveDevice);$('addIncidentBtn').addEventListener('click',addIncident);$('promoteSubmit').addEventListener('click',promote);$('startSubmit').addEventListener('click',startSubject);$('addUserBtn').addEventListener('click',addUser);$('backupBtn').addEventListener('click',downloadBackup);$('credGpsRotate').addEventListener('click',rotateGps);$('credPortalRotate').addEventListener('click',rotatePortal);document.querySelectorAll('[data-copy-credential]').forEach(b=>b.addEventListener('click',()=>copyCredential(b.dataset.copyCredential)));
 document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>showTab(b.dataset.tab)));document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',()=>$(b.dataset.close).close()));
+document.querySelectorAll('[data-track-hours]').forEach(b=>b.addEventListener('click',()=>loadGpsTrack(b.dataset.trackHours)));
 $('loginPassword').addEventListener('keydown',e=>{if(e.key==='Enter')login()});$('setupPassword2').addEventListener('keydown',e=>{if(e.key==='Enter')firstSetup()});
 initialize();

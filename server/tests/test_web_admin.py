@@ -94,6 +94,10 @@ def test_web_admin_flow(monkeypatch):
             old_token = portal.json()['path'].removeprefix('/p/')
             assert client.get(f'/api/v1/portal/{old_token}').status_code == 404
             assert client.post('/api/v1/web/subjects/001/start', json={'pack_id':'D01','start_date':'2026-09-01','end_date':'2026-09-14'}, headers=h).status_code == 200
+            track = client.get('/api/v1/web/subjects/001/gps-track?hours=12')
+            assert track.status_code == 200
+            assert track.json()['total_point_count'] == 0
+            assert client.get('/api/v1/web/subjects/001/gps-track?hours=3').status_code == 400
             light = client.post(
                 '/api/v1/web/lighting/upload?participant_id=001&date_local=2026-09-01&filename=001_20260901_LIGHT.csv',
                 content=b'Photopic Lux,Melanopic,Is Saturate\n100,80,No\n', headers=h,
@@ -107,6 +111,8 @@ def test_web_admin_flow(monkeypatch):
             assert client.get('/api/v1/web/data-sources').status_code == 200
             assert client.get('/api/v1/web/architecture').status_code == 200
             assert client.get('/admin').status_code == 200
+            assert client.get('/admin/vendor/leaflet.css').status_code == 200
+            assert client.get('/admin/vendor/leaflet.js').status_code == 200
 
             backup = client.get('/api/v1/web/backup')
             assert backup.status_code == 200
