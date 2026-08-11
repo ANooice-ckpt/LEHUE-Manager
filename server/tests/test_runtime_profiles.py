@@ -1,9 +1,13 @@
 import sqlite3
+import shutil
 from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import app.core.config as config
+import app.core.db as dbmod
 import app.core.test_seed as test_seed
 
 
@@ -85,3 +89,49 @@ def test_prod_never_reads_test_seed(monkeypatch, tmp_path):
 
     assert test_seed.install_test_seed_if_empty() is False
     assert not data_dir.exists()
+
+
+def test_prod_requires_oss_backend(monkeypatch):
+    monkeypatch.setattr(config, "_RUNTIME_ENV", "prod")
+    monkeypatch.delenv("LIGHT_STORAGE_BACKEND", raising=False)
+    assert config._light_storage_backend() == "oss"
+    monkeypatch.setenv("LIGHT_STORAGE_BACKEND", "local")
+    with pytest.raises(RuntimeError, match="PROD Lighting raw storage must use OSS"):
+        config._light_storage_backend()
+
+
+def test_oss_settings_require_bucket_endpoint_and_credentials():
+    with pytest.raises(RuntimeError, match="OSS_BUCKET"):
+        config.Settings(light_storage_backend="oss")
+    settings = config.Settings(
+        light_storage_backend="oss",
+        oss_bucket="lehue-test",
+        oss_region="cn-hongkong",
+        oss_access_key_id="test-key-id",
+        oss_access_key_secret="test-key-secret",
+    )
+    assert settings.oss_bucket == "lehue-test"
+
+
+def test_existing_lighting_table_gets_storage_columns(monkeypatch, tmp_path):
+    data_dir = tmp_path / "test"
+    data_dir.mkdir()
+    db_path = data_dir / "lehue.sqlite3"
+    shutil.copyfile(Path(__file__).parents[1] / "test_seed" / "lehue.sqlite3", db_path)
+    settings = SimpleNamespace(
+        data_dir=data_dir,
+        db_path=db_path,
+        raw_archive_dir=data_dir / "raw" / "gps",
+        raw_light_dir=data_dir / "raw" / "lighting",
+        light_storage_backend="local",
+    )
+    monkeypatch.setattr(dbmod, "settings", settings)
+
+    dbmod.init_db()
+
+    with closing(sqlite3.connect(db_path)) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(lighting_files)")}
+        assert {"storage_backend", "object_key"} <= columns
+        assert conn.execute(
+            "SELECT COUNT(*) FROM lighting_files WHERE object_key<>stored_path"
+        ).fetchone()[0] == 0

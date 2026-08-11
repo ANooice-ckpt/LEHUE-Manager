@@ -72,6 +72,11 @@ def test_lighting_upload_and_daily_qc(monkeypatch):
         assert parsed["valid_pct"] == 90.0
         assert parsed["quality"] == "valid"
         light.store_upload("001", yesterday.isoformat(), f"001_{yesterday.strftime('%Y%m%d')}_LIGHT.csv", raw, "test")
+        with dbmod.db() as conn:
+            stored = dict(conn.execute("SELECT * FROM lighting_files WHERE date_local=?", (yesterday.isoformat(),)).fetchone())
+        assert stored["storage_backend"] == "local"
+        assert stored["object_key"].startswith(f"raw/lighting/001/{yesterday.isoformat()}/light_")
+        assert (light.settings.data_dir / Path(*stored["object_key"].split("/"))).is_file()
 
         token = portal.generate_portal_token("001")
         from fastapi.testclient import TestClient

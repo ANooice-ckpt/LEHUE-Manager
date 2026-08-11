@@ -116,6 +116,8 @@ CREATE TABLE IF NOT EXISTS lighting_files (
     date_local TEXT NOT NULL,
     original_filename TEXT NOT NULL,
     stored_path TEXT NOT NULL,
+    storage_backend TEXT NOT NULL DEFAULT 'local',
+    object_key TEXT NOT NULL DEFAULT '',
     file_size_bytes INTEGER NOT NULL,
     sha256 TEXT NOT NULL,
     uploaded_at_utc TEXT NOT NULL,
@@ -201,6 +203,11 @@ SUBJECT_COLUMNS = {
     "close_notes": "TEXT NOT NULL DEFAULT ''",
 }
 
+LIGHTING_COLUMNS = {
+    "storage_backend": "TEXT NOT NULL DEFAULT 'local'",
+    "object_key": "TEXT NOT NULL DEFAULT ''",
+}
+
 
 def connect() -> sqlite3.Connection:
     settings.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -243,15 +250,25 @@ def _ensure_participant_columns(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE participants ADD COLUMN {name} {declaration}")
 
 
+def _ensure_lighting_columns(conn: sqlite3.Connection) -> None:
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(lighting_files)")}
+    for name, declaration in LIGHTING_COLUMNS.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE lighting_files ADD COLUMN {name} {declaration}")
+    conn.execute("UPDATE lighting_files SET object_key=stored_path WHERE object_key='' AND stored_path<>''")
+
+
 def init_db() -> None:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     settings.raw_archive_dir.mkdir(parents=True, exist_ok=True)
-    settings.raw_light_dir.mkdir(parents=True, exist_ok=True)
+    if settings.light_storage_backend == "local":
+        settings.raw_light_dir.mkdir(parents=True, exist_ok=True)
     conn = connect()
     try:
         conn.executescript(SCHEMA)
         _ensure_participant_columns(conn)
         _ensure_subject_columns(conn)
+        _ensure_lighting_columns(conn)
         conn.commit()
     finally:
         conn.close()

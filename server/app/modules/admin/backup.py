@@ -5,6 +5,7 @@ import json
 import sqlite3
 import tempfile
 import zipfile
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -26,14 +27,14 @@ def create_system_backup() -> tuple[str, str]:
     main_copy = temp_dir / "lehue.sqlite3"
     identity_copy = temp_dir / "lehue_identity.sqlite3"
 
-    with connect() as src:
+    with closing(connect()) as src:
         dst = sqlite3.connect(main_copy)
         try:
             src.backup(dst); dst.commit()
         finally:
             dst.close()
 
-    with connect_identity() as src:
+    with closing(connect_identity()) as src:
         dst = sqlite3.connect(identity_copy)
         try:
             src.backup(dst)

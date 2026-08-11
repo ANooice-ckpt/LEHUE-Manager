@@ -6,6 +6,7 @@ import secrets
 import base64
 import binascii
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -307,7 +308,7 @@ def data_sources() -> list[dict[str, Any]]:
     return [
         {"key":"gps","name":"GPS","status":"connected","acquisition":"OwnTracks HTTP/HTTPS realtime","storage":"lehue.sqlite3 + raw JSONL","automation":"Realtime ingest + acquisition QC","last_event":gps_last,"records":gps_count},
         {"key":"questionnaire","name":"Questionnaire","status":"connected","acquisition":"LEHUE participant portal /p/<token>","storage":"lehue.sqlite3 / questionnaire_responses","automation":"Identity + Study Day + submission status are automatic","last_event":q_last,"records":q_count},
-        {"key":"light","name":"Lighting","status":"connected","acquisition":"Participant portal or RA backfill upload","storage":"raw/lighting files + lehue.sqlite3 metadata","automation":"V5-compatible parser + 7200/90% acquisition QC","last_event":light["last_event"],"records":light["records"]},
+        {"key":"light","name":"Lighting","status":"connected","acquisition":"Participant portal or RA backfill upload","storage":f"{settings.light_storage_backend}: raw/lighting objects + lehue.sqlite3 metadata","automation":"V5-compatible parser + 7200/90% acquisition QC","last_event":light["last_event"],"records":light["records"]},
         {"key":"ax3","name":"AX3","status":"offline","acquisition":"Device return → batch download","storage":"Local/raw archive; cloud status only","automation":"Post-return ingest reserved","last_event":None,"records":None},
         {"key":"identity","name":"Identity & contact","status":"connected","acquisition":"PI/RA Web Admin","storage":"lehue_identity.sqlite3","automation":"Separated from GPS/research records","last_event":None,"records":None},
     ]
@@ -319,6 +320,12 @@ def list_lighting_uploads(participant_id: str = "", date_local: str = ""):
 
 def upload_lighting(participant_id: str, date_local: str, filename: str, raw: bytes, operator: str):
     result = light_service.store_upload(participant_id, date_local, filename, raw, f"admin:{operator}")
+    audit(operator, "lighting.upload", "lighting_file", result["upload_uid"], {"participant_id": participant_id, "date_local": date_local, "quality": result["quality"]})
+    return result
+
+
+def upload_lighting_path(participant_id: str, date_local: str, filename: str, path: Path, operator: str):
+    result = light_service.store_upload_path(participant_id, date_local, filename, path, f"admin:{operator}")
     audit(operator, "lighting.upload", "lighting_file", result["upload_uid"], {"participant_id": participant_id, "date_local": date_local, "quality": result["quality"]})
     return result
 

@@ -81,3 +81,43 @@ Set-ExecutionPolicy -Scope Process Bypass
 - 公网部署只暴露 Caddy 80/443；FastAPI 8000 不直接开放。
 - `/health` 不返回 participant ID、身份信息、坐标或问卷答案。
 - 当前仍是工程测试版本；正式被试前还需补登录/portal 限速、定时异地备份、恢复演练及隐私流程。
+
+## Lighting raw storage：本地与 OSS
+
+Lighting 的 HTTP 接口保持不变，但原始文件通过 `light/storage.py` 保存。上传请求会先流式写入操作系统临时文件，避免把约 40 MB 的 raw 一次性保存在 Python `bytes` 中；canonical object 保存成功后，系统下载临时副本执行现有 parser/QC，结果写入 `lighting_files`，随后删除临时副本。Daily QC 只查询 SQLite 中已经保存的 QC 字段。
+
+对象键固定为：
+
+```text
+raw/lighting/<participant_id>/<date_local>/<upload_uid>.<ext>
+```
+
+Windows 本地 TEST 默认不需要 OSS：
+
+```powershell
+$env:LEHUE_ENV = "test"
+$env:LIGHT_STORAGE_BACKEND = "local"
+```
+
+此时 canonical raw 位于 `server/data/test/raw/lighting/...`。运行测试：
+
+```powershell
+server\.venv\Scripts\python.exe -m pytest server\tests -q
+```
+
+云端 TEST 或本地真实 OSS 集成测试使用独立的香港测试桶和最小权限凭据：
+
+```powershell
+$env:LEHUE_ENV = "test"
+$env:LIGHT_STORAGE_BACKEND = "oss"
+$env:OSS_BUCKET = "<TEST bucket>"
+$env:OSS_REGION = "cn-hongkong"
+$env:OSS_ACCESS_KEY_ID = "<secret>"
+$env:OSS_ACCESS_KEY_SECRET = "<secret>"
+$env:RUN_OSS_INTEGRATION = "1"
+server\.venv\Scripts\python.exe -m pytest server\tests\test_light_storage.py -q
+```
+
+`OSS_ENDPOINT` 可选；不设置时由 `OSS_REGION` 生成公网 endpoint。ECS 若使用内网 endpoint，应显式设置 `OSS_ENDPOINT`。AccessKey 只放在服务器 `.env` 或部署平台的 secret store，不写入代码或 Git。
+
+PROD 默认选择并强制要求 `LIGHT_STORAGE_BACKEND=oss`。TEST 与 PROD 必须使用不同的 bucket、RAM 凭据和 SQLite 数据目录；PROD 凭据不要授予 TEST bucket 权限。

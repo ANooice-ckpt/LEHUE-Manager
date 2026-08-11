@@ -10,6 +10,7 @@ from starlette.background import BackgroundTask
 
 from app.core import web_security
 from app.core.config import settings
+from app.modules.light import service as light_service
 from app.core.web_security import (
     authenticate_admin,
     delete_session,
@@ -257,10 +258,15 @@ def lighting_uploads(participant_id: str = "", date_local: str = "", operator=De
 
 @router.post("/api/v1/web/lighting/upload")
 async def lighting_upload(participant_id: str, date_local: str, filename: str, request: Request, operator=Depends(require_operator_write)):
+    path = None
     try:
-        return service.upload_lighting(participant_id, date_local, filename, await request.body(), operator.username)
+        path = await light_service.request_to_temp(request, filename)
+        return service.upload_lighting_path(participant_id, date_local, filename, path, operator.username)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    finally:
+        if path is not None:
+            path.unlink(missing_ok=True)
 
 
 @router.get("/api/v1/web/subjects/{participant_id}/credentials")

@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 
+from app.modules.light import service as light_service
 from . import service
 
 router = APIRouter()
@@ -37,10 +38,14 @@ async def questionnaire_submit(portal_token: str, form_key: str, request: Reques
 
 @router.post("/api/v1/portal/{portal_token}/lighting")
 async def lighting_submit(portal_token: str, date_local: str, filename: str, request: Request):
-    raw = await request.body()
+    path = None
     try:
-        return service.submit_lighting(portal_token, date_local, filename, raw)
+        path = await light_service.request_to_temp(request, filename)
+        return service.submit_lighting_path(portal_token, date_local, filename, path)
     except LookupError:
         raise HTTPException(status_code=404, detail="Invalid or expired participant link")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    finally:
+        if path is not None:
+            path.unlink(missing_ok=True)

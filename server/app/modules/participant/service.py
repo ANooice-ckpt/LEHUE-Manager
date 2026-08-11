@@ -4,6 +4,7 @@ import json
 import secrets
 import sqlite3
 from datetime import date, datetime, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from app.core.config import settings
@@ -132,7 +133,7 @@ def portal_state(token: str) -> dict:
     }
 
 
-def submit_lighting(token: str, date_local: str, filename: str, raw: bytes) -> dict:
+def _lighting_participant(token: str, date_local: str) -> str:
     subject = _resolve_subject(token)
     if not subject:
         raise LookupError("invalid participant link")
@@ -153,7 +154,17 @@ def submit_lighting(token: str, date_local: str, filename: str, raw: bytes) -> d
             start_day = None
         if start_day and exposure_day < start_day:
             raise ValueError("所选日期早于实验开始日期")
-    return light_service.store_upload(subject["participant_id"], date_local, filename, raw, "participant_portal")
+    return subject["participant_id"]
+
+
+def submit_lighting_path(token: str, date_local: str, filename: str, path: Path) -> dict:
+    participant_id = _lighting_participant(token, date_local)
+    return light_service.store_upload_path(participant_id, date_local, filename, path, "participant_portal")
+
+
+def submit_lighting(token: str, date_local: str, filename: str, raw: bytes) -> dict:
+    participant_id = _lighting_participant(token, date_local)
+    return light_service.store_upload(participant_id, date_local, filename, raw, "participant_portal")
 
 
 def submit_questionnaire(token: str, form_key: str, answers: dict) -> dict:

@@ -3,18 +3,20 @@ from __future__ import annotations
 import csv
 import hashlib
 import math
+import os
 import re
 import secrets
 import statistics
+import tempfile
 import zipfile
 from datetime import date, datetime, time, timedelta, timezone
-from io import BytesIO, StringIO
 from pathlib import Path
 from xml.etree import ElementTree as ET
 from zoneinfo import ZoneInfo
 
 from app.core.config import settings
 from app.core.db import db
+from app.modules.light.storage import get_light_storage
 
 EXPECTED_SAMPLES = 7200
 VALID_THRESHOLD_PCT = 90.0
@@ -98,10 +100,10 @@ def _xlsx_col_index(ref: str) -> int:
     return result - 1
 
 
-def _rows_from_xlsx(raw: bytes) -> list[list[str]]:
+def _rows_from_xlsx(path: Path) -> list[list[str]]:
     ns = {"a": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
     rows: list[list[str]] = []
-    with zipfile.ZipFile(BytesIO(raw)) as zf:
+    with zipfile.ZipFile(path) as zf:
         shared = _xlsx_shared_strings(zf)
         sheets = sorted(name for name in zf.namelist() if name.startswith("xl/worksheets/sheet") and name.endswith(".xml"))
         for sheet in sheets:
@@ -128,16 +130,18 @@ def _rows_from_xlsx(raw: bytes) -> list[list[str]]:
     return rows
 
 
-def _rows_from_text(raw: bytes) -> list[list[str]]:
+def _rows_from_text(path: Path) -> list[list[str]]:
     last_error: Exception | None = None
     for encoding in ("utf-8-sig", "utf-8", "gb18030", "utf-16", "big5"):
         try:
-            text = raw.decode(encoding)
-            try:
-                dialect = csv.Sniffer().sniff(text[:4096], delimiters=",\t;|")
-            except csv.Error:
-                dialect = csv.excel
-            return [[str(value).strip() for value in row] for row in csv.reader(StringIO(text), dialect)]
+            with path.open("r", encoding=encoding, newline="") as handle:
+                sample = handle.read(4096)
+                handle.seek(0)
+                try:
+                    dialect = csv.Sniffer().sniff(sample, delimiters=",\t;|")
+                except csv.Error:
+                    dialect = csv.excel
+                return [[str(value).strip() for value in row] for row in csv.reader(handle, dialect)]
         except (UnicodeError, csv.Error) as exc:
             last_error = exc
     raise ValueError(f"CSV/TXT 编码或格式无法读取：{last_error}")
@@ -214,11 +218,11 @@ def _stats(values: list[float]) -> tuple[float | None, float | None, float | Non
     return round(sum(values) / len(values), 3), round(float(statistics.median(values)), 3), round(max(values), 3)
 
 
-def parse_light_bytes(filename: str, raw: bytes) -> dict:
+def parse_light_path(filename: str, path: Path) -> dict:
     suffix = Path(filename or "").suffix.lower()
     if suffix not in ALLOWED_EXTENSIONS:
         raise ValueError("Lighting 只支持 .csv、.xlsx 或 .txt")
-    rows = _rows_from_xlsx(raw) if suffix == ".xlsx" else _rows_from_text(raw)
+    rows = _rows_from_xlsx(path) if suffix == ".xlsx" else _rows_from_text(path)
     records = _extract_repeated_records(rows) or _extract_table_records(rows)
     total = len(records)
     photopic_values: list[float] = []
@@ -254,15 +258,62 @@ def parse_light_bytes(filename: str, raw: bytes) -> dict:
     }
 
 
+def parse_light_bytes(filename: str, raw: bytes) -> dict:
+    """Backward-compatible helper; normal ingestion parses from a temporary path."""
+    suffix = Path(filename or "").suffix.lower()
+    fd, name = tempfile.mkstemp(prefix="lehue-light-parse-", suffix=suffix)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(raw)
+        return parse_light_path(filename, Path(name))
+    finally:
+        Path(name).unlink(missing_ok=True)
+
+
+async def request_to_temp(request, filename: str) -> Path:
+    """Stream an HTTP body to a size-limited temporary file."""
+    suffix = Path(filename or "").suffix.lower()
+    if suffix not in ALLOWED_EXTENSIONS:
+        raise ValueError("Lighting 只支持 .csv、.xlsx 或 .txt")
+    fd, name = tempfile.mkstemp(prefix="lehue-light-upload-", suffix=suffix)
+    path = Path(name)
+    size = 0
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > settings.light_upload_max_bytes:
+                    raise ValueError(
+                        f"Lighting 文件超过上传上限 "
+                        f"{settings.light_upload_max_bytes // 1024 // 1024} MB"
+                    )
+                handle.write(chunk)
+        if size == 0:
+            raise ValueError("Lighting 文件为空")
+        return path
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+
+
 def _public_upload(row, duplicate: bool = False) -> dict:
     result = dict(row)
     result.pop("stored_path", None)
+    result.pop("object_key", None)
     result.pop("sha256", None)
     result["duplicate"] = duplicate
     return result
 
 
-def store_upload(participant_id: str, date_local: str, filename: str, raw: bytes, uploaded_by: str) -> dict:
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def store_upload_path(participant_id: str, date_local: str, filename: str, source_path: Path, uploaded_by: str) -> dict:
     participant_id = str(participant_id or "").strip()
     date_local = normalize_date(date_local)
     filename = Path(str(filename or "")).name
@@ -271,9 +322,11 @@ def store_upload(participant_id: str, date_local: str, filename: str, raw: bytes
         raise ValueError("Lighting 暴露日期必须使用 YYYY-MM-DD")
     if suffix not in ALLOWED_EXTENSIONS:
         raise ValueError("Lighting 只支持 .csv、.xlsx 或 .txt")
-    if not raw:
+    source_path = Path(source_path)
+    size_bytes = source_path.stat().st_size
+    if size_bytes <= 0:
         raise ValueError("Lighting 文件为空")
-    if len(raw) > settings.light_upload_max_bytes:
+    if size_bytes > settings.light_upload_max_bytes:
         raise ValueError(f"Lighting 文件超过上传上限 {settings.light_upload_max_bytes // 1024 // 1024} MB")
     inferred_sid = infer_subject_id(filename)
     inferred_date = infer_date(filename)
@@ -284,7 +337,7 @@ def store_upload(participant_id: str, date_local: str, filename: str, raw: bytes
     with db() as conn:
         if not conn.execute("SELECT 1 FROM study_subjects WHERE participant_id=?", (participant_id,)).fetchone():
             raise ValueError("participant not found")
-    digest = hashlib.sha256(raw).hexdigest()
+    digest = _sha256_file(source_path)
     with db() as conn:
         existing = conn.execute(
             "SELECT * FROM lighting_files WHERE participant_id=? AND date_local=? AND sha256=?",
@@ -293,35 +346,38 @@ def store_upload(participant_id: str, date_local: str, filename: str, raw: bytes
     if existing:
         return _public_upload(existing, duplicate=True)
 
-    try:
-        summary = parse_light_bytes(filename, raw)
-    except Exception as exc:
-        summary = {
-            "records_expected": EXPECTED_SAMPLES, "records_total": 0, "records_valid": 0,
-            "records_saturated": 0, "valid_pct": 0.0, "quality": "unreadable",
-            "photopic_mean": None, "photopic_median": None, "photopic_max": None,
-            "melanopic_mean": None, "melanopic_median": None, "melanopic_max": None,
-            "parse_error": str(exc),
-        }
     upload_uid = f"light_{secrets.token_hex(10)}"
-    folder = settings.raw_light_dir / participant_id / date_local
-    folder.mkdir(parents=True, exist_ok=True)
-    stored = folder / f"{upload_uid}{suffix}"
-    temporary = folder / f".{upload_uid}.part"
-    temporary.write_bytes(raw)
-    temporary.replace(stored)
+    object_key = f"raw/lighting/{participant_id}/{date_local}/{upload_uid}{suffix}"
+    storage = get_light_storage()
+    head = storage.save(source_path, object_key)
+    if head.size_bytes != size_bytes:
+        storage.delete(object_key)
+        raise RuntimeError("Lighting stored object size does not match upload")
+
+    qc_path: Path | None = None
     try:
+        qc_path = storage.download_to_temp(object_key)
+        try:
+            summary = parse_light_path(filename, qc_path)
+        except Exception as exc:
+            summary = {
+                "records_expected": EXPECTED_SAMPLES, "records_total": 0, "records_valid": 0,
+                "records_saturated": 0, "valid_pct": 0.0, "quality": "unreadable",
+                "photopic_mean": None, "photopic_median": None, "photopic_max": None,
+                "melanopic_mean": None, "melanopic_median": None, "melanopic_max": None,
+                "parse_error": str(exc),
+            }
         with db() as conn:
             conn.execute(
                 """INSERT INTO lighting_files(
-                    upload_uid,participant_id,date_local,original_filename,stored_path,file_size_bytes,sha256,
+                    upload_uid,participant_id,date_local,original_filename,stored_path,storage_backend,object_key,file_size_bytes,sha256,
                     uploaded_at_utc,uploaded_by,parser_version,records_expected,records_total,records_valid,
                     records_saturated,valid_pct,quality,photopic_mean,photopic_median,photopic_max,
                     melanopic_mean,melanopic_median,melanopic_max,parse_error
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    upload_uid, participant_id, date_local, filename, str(stored.relative_to(settings.data_dir) if stored.is_relative_to(settings.data_dir) else stored),
-                    len(raw), digest, now_iso(), uploaded_by, PARSER_VERSION,
+                    upload_uid, participant_id, date_local, filename, object_key, storage.backend, object_key,
+                    size_bytes, digest, now_iso(), uploaded_by, PARSER_VERSION,
                     summary["records_expected"], summary["records_total"], summary["records_valid"], summary["records_saturated"],
                     summary["valid_pct"], summary["quality"], summary["photopic_mean"], summary["photopic_median"],
                     summary["photopic_max"], summary["melanopic_mean"], summary["melanopic_median"], summary["melanopic_max"], summary["parse_error"],
@@ -329,9 +385,24 @@ def store_upload(participant_id: str, date_local: str, filename: str, raw: bytes
             )
             row = conn.execute("SELECT * FROM lighting_files WHERE upload_uid=?", (upload_uid,)).fetchone()
     except Exception:
-        stored.unlink(missing_ok=True)
+        storage.delete(object_key)
         raise
+    finally:
+        if qc_path is not None:
+            qc_path.unlink(missing_ok=True)
     return _public_upload(row)
+
+
+def store_upload(participant_id: str, date_local: str, filename: str, raw: bytes, uploaded_by: str) -> dict:
+    """Compatibility entry point for existing Python callers and tests."""
+    suffix = Path(filename or "").suffix.lower()
+    fd, name = tempfile.mkstemp(prefix="lehue-light-upload-", suffix=suffix)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(raw)
+        return store_upload_path(participant_id, date_local, filename, Path(name), uploaded_by)
+    finally:
+        Path(name).unlink(missing_ok=True)
 
 
 def _quality_rank(row: dict) -> tuple[int, float, int]:
