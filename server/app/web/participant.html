@@ -80,7 +80,7 @@ async function api(url,opts={}){const r=await fetch(url,{...opts,headers:{'Conte
 function gpsText(g){if(g.status==='live')return ['回传正常','最近数据已收到','正常'];if(g.status==='backfilling')return ['正在补传','正在接收断网期间的记录','补传中'];if(g.status==='stale')return ['回传延迟','请确认 OwnTracks 正常运行','需留意'];if(g.status==='offline')return ['较久未回传','请检查手机定位与 OwnTracks','需检查'];return ['尚无记录','首次定位后会自动更新','等待中']}
 function showHome(){currentForm=null;currentLighting=null;$('formView').classList.add('hidden');$('lightView').classList.add('hidden');$('home').classList.remove('hidden')}
 function lightText(x){if(x.status==='pending')return ['上传中断，可继续','','!'];if(x.status==='uploaded')return ['已上传，等待检查','','·'];if(x.message&&x.quality!=='unreadable')return [x.message,'','!'];if(x.quality==='valid')return [`已完成 · 有效率 ${Number(x.valid_pct).toFixed(1)}%`,'done','✓'];if(x.quality==='insufficient')return [`文件已收到 · 覆盖不足 ${Number(x.valid_pct).toFixed(1)}%，可重传`,'','!'];if(x.quality==='unreadable')return ['文件已收到，但内容无法解析，可重传','','!'];return ['上传 Lighting 文件','','›']}
-function formTask(f){const enabled=state.status==='running'&&!f.completed&&f.study_day>0,label=f.key==='morning'?'晨间问卷':'睡前问卷',kind=!enabled?'disabled':f.is_makeup?'makeup':'primary';return `<button class="task ${f.completed?'done':kind}" data-form="${esc(f.task_id)}" ${enabled?'':'disabled'}><span class="code">${f.key==='morning'?'晨':'晚'}</span><span><div class="name">${label}</div><div class="desc">${f.completed?'已完成 · ':''}${esc(f.time_scope.range)} · ${esc(f.experiment_date_local)} · Day ${f.study_day}</div></span><span class="right">${f.completed?'✓':'›'}</span></button>`}
+function formTask(f){const enabled=state.status==='running'&&!f.completed&&(f.study_day>0||['s1','s2'].includes(f.key)),label=f.key==='morning'?'晨间问卷':f.key==='evening'?'睡前问卷':f.title,kind=!enabled?'disabled':f.is_makeup?'makeup':'primary',code=f.key==='morning'?'晨':f.key==='evening'?'晚':f.key.toUpperCase();return `<button class="task ${f.completed?'done':kind}" data-form="${esc(f.task_id)}" ${enabled?'':'disabled'}><span class="code">${code}</span><span><div class="name">${esc(label)}</div><div class="desc">${f.completed?'已完成 · ':''}${esc(f.time_scope.range)}${f.study_day?` · ${esc(f.experiment_date_local)} · Day ${f.study_day}`:''}</div></span><span class="right">${f.completed?'✓':'›'}</span></button>`}
 function lightTask(x){const enabled=state.status==='running',[text,style,right]=lightText(x),kind=!enabled?'disabled':x.is_makeup?'makeup':style||'primary';return `<button class="task ${kind}" data-lighting="${esc(x.date_local)}" ${enabled?'':'disabled'}><span class="code">光</span><span><div class="name">Lighting 上传</div><div class="desc">${esc(text)} · ${esc(x.date_local)}${x.study_day?` · Day ${x.study_day}`:''}</div></span><span class="right">${right}</span></button>`}
 function updateClock(){if(!state)return;const now=new Date(),zone=state.study_timezone||'Asia/Shanghai';$('clockDate').textContent=new Intl.DateTimeFormat('zh-CN',{timeZone:zone,month:'long',day:'numeric',weekday:'long'}).format(now);$('clockTime').textContent=new Intl.DateTimeFormat('zh-CN',{timeZone:zone,hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(now)}
 function openStudy(){const s=state.study||{},g=gpsText(state.gps),config=state.owntracks?.available?`<div class="special"><strong>OwnTracks 一键配置</strong><div class="portal-note">先在 OwnTracks 设置中允许 External Configuration，再点击导入并确认。</div><a class="submit" style="display:block;text-align:center;text-decoration:none" href="${esc(state.owntracks.uri)}">打开 OwnTracks 配置</a></div>`:'';$('studyFacts').innerHTML=`<div class="cohort-stat"><strong>Day ${state.study_day||'—'} / ${state.total_days||'—'}</strong><span>${esc(s.start_date||'—')} → ${esc(s.end_date||'—')}</span></div><div class="cohort-stat"><strong>${esc(s.pack_id||'未登记')}</strong><span>设备包</span></div><div class="cohort-stat"><strong>${esc(g[2])}</strong><span>GPS · ${esc(g[1])}</span></div>`;$('studyHelp').innerHTML=config+(state.help||[]).map(x=>`<div class="special" style="margin-top:12px"><strong>${esc(x.title)}</strong><div class="portal-note">${esc(x.text)}</div></div>`).join('');$('studyDialog').showModal()}
@@ -97,6 +97,23 @@ async function submitLighting(){const file=$('lightFile').files[0];if(!file||!cu
 async function refreshHome(){if($('home').classList.contains('hidden'))return;try{state=await api(`/api/v1/portal/${encodeURIComponent(token)}`);render()}catch{}}
 async function boot(){try{state=await api(`/api/v1/portal/${encodeURIComponent(token)}`);render();setInterval(updateClock,1000);setInterval(refreshHome,60000)}catch(e){$('loading').innerHTML=`<div class="error"><strong>无法接入研究工作台</strong><br>${esc(e.message)}</div>`}}
 $('backBtn').addEventListener('click',showHome);$('lightBackBtn').addEventListener('click',showHome);$('submitBtn').addEventListener('click',submitForm);$('lightSubmitBtn').addEventListener('click',submitLighting);$('studyEntry').addEventListener('click',openStudy);document.querySelectorAll('[data-close-dialog]').forEach(button=>button.addEventListener('click',()=>$(button.dataset.closeDialog).close()));boot();
+</script>
+<script>
+const baseRender=render;
+render=function(){
+  baseRender();
+  if(!$('fieldReminders')){
+    const box=document.createElement('div');box.id='fieldReminders';box.className='special';
+    box.innerHTML='<div class="special-title">现场提醒</div><div id="morningReminder" class="alert hidden"></div><div id="chargeReminder" class="alert hidden"></div><div id="fieldTips" class="portal-note"></div>';
+    $('studyEntry').closest('.more-grid').before(box);
+  }
+  const reminders=state.field_reminders||{},morning=reminders.morning_restart||{},charge=reminders.evening_charge||{};
+  $('morningReminder').classList.toggle('hidden',!morning.show);
+  if(morning.show)$('morningReminder').innerHTML=`<span class="alert-icon">早</span><span><strong>${esc(morning.text)}</strong><span>${morning.completed?'晨间问卷已完成；今天仍请确认 Lighting 已重新开始记录。':'晨起先完成设备重启，再继续今日安排。'}</span></span>`;
+  $('chargeReminder').classList.toggle('hidden',!charge.show);
+  if(charge.show)$('chargeReminder').innerHTML=`<span class="alert-icon">充</span><span><strong>${esc(charge.text)}</strong><span>这是今天最后一个现场动作。</span></span>`;
+  $('fieldTips').textContent=[reminders.wearing,reminders.raw_file].filter(Boolean).join(' · ');
+};
 </script>
 </body>
 </html>

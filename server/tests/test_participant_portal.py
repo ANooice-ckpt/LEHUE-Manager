@@ -168,7 +168,7 @@ def test_participant_portal_questionnaire_flow(monkeypatch):
                     "SELECT COUNT(*) n FROM lighting_files WHERE participant_id='001' AND date_local=?", (yesterday,)
                 ).fetchone()["n"] == 1
             state3 = client.get(f"/api/v1/portal/{token}").json()
-            assert yesterday not in [x["date_local"] for x in state3["lighting_tasks"] if x["is_makeup"]]
+            assert yesterday in [x["date_local"] for x in state3["lighting_tasks"] if x["is_makeup"]]
             # The deliberately short test file is kept as incomplete Lighting, so only both questionnaires count.
             assert state3["progress"]["completed"] == 2
 

@@ -1,5 +1,7 @@
 # LEHUE v0.5：旧 V5 对照、Lighting 与 S0 迁移
 
+> Superseded for current storage and lifecycle behavior. PROD Lighting now uses private OSS as canonical storage. Portal token + explicit task provide assignment context; filenames remain provenance and are not a standalone rejection gate.
+
 ## 1. 迁移边界
 
 旧 ANOLighting V5 被视为经过实际实验验证的 workflow/reference implementation。本次没有恢复旧 GPS 文件扫描，也没有恢复每日问卷星 CSV：

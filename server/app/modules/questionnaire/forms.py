@@ -33,6 +33,21 @@ DEVICE_STATUS_OPTIONS = [
 ]
 
 FORMS = {
+    "s1": {
+        "key": "s1",
+        "title": "S1 入组问卷",
+        "description": "正式开始前填写；被试编号由专属入口自动绑定。",
+        "questions": [
+            {"key": "birth_month", "type": "text", "label": "出生年月（YYYY-MM）", "required": True},
+            {"key": "height_cm", "type": "number", "label": "身高（厘米）", "min": 100, "max": 230, "required": True},
+            {"key": "weight_kg", "type": "number", "label": "体重（千克）", "min": 30, "max": 250, "required": True},
+            {"key": "subjective_status", "type": "scale", "label": "您认为自己目前在北京社会资源和社会位置中大致位于第几级？", "min": 1, "max": 10, "low": "1", "high": "10", "required": True},
+            {"key": "vision_correction", "type": "choice", "label": "日常白天主要使用哪种视力矫正方式？", "options": [
+                {"value": "none", "label": "不佩戴眼镜"}, {"value": "frames", "label": "普通框架眼镜"},
+                {"value": "contacts", "label": "隐形眼镜"}, {"value": "both", "label": "框架和隐形都会使用"}], "required": True},
+            {"key": "baseline_notes", "type": "text", "label": "其他可能影响受光、睡眠或日常活动的基线情况（没有请填“无”）", "required": True},
+        ],
+    },
     "morning": {
         "key": "morning",
         "title": "每日记录1-晨起后填写",
@@ -100,6 +115,24 @@ FORMS = {
                 "options": DEVICE_STATUS_OPTIONS,
                 "required": True,
             },
+        ],
+    },
+    "s2": {
+        "key": "s2",
+        "title": "S2 实验结束问卷",
+        "description": "结束正式曝光后填写；已有实验日和被试编号由系统绑定。",
+        "questions": [
+            {"key": "routine_change", "type": "choice", "label": "实验期间日常生活是否基本保持平常状态？", "options": [
+                {"value": "usual", "label": "基本保持平常"}, {"value": "minor", "label": "有少量变化"}, {"value": "major", "label": "变化较大"}], "required": True},
+            {"key": "special_events", "type": "text", "label": "特殊事件及大致日期（没有请填“无”）", "required": True},
+            {"key": "location_or_schedule_change", "type": "text", "label": "工作/学习地点、居住地点或作息变化（没有请填“无”）", "required": True},
+            {"key": "burden", "type": "choice", "label": "哪部分最影响参与体验？", "options": [
+                {"value": "lighting", "label": "佩戴光照设备"}, {"value": "ax3", "label": "佩戴腕部设备"},
+                {"value": "gps", "label": "GPS 记录"}, {"value": "questionnaire", "label": "每日问卷"},
+                {"value": "upload", "label": "数据上传"}, {"value": "logistics", "label": "设备取还"}], "required": True},
+            {"key": "report_preference", "type": "choice", "label": "是否希望获取个人光照与睡眠摘要报告？", "options": [
+                {"value": "yes", "label": "是"}, {"value": "no", "label": "否"}], "required": True},
+            {"key": "final_feedback", "type": "text", "label": "其他反馈（可选）", "required": False},
         ],
     },
 }
@@ -182,4 +215,3 @@ def validate_answers(form: dict[str, Any], answers: dict[str, Any]) -> dict[str,
                 raise ValueError(f"文本过长：{question['label']}")
             normalized[key] = text
     return normalized
-

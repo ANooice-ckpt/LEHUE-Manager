@@ -5,7 +5,7 @@ import re
 import secrets
 import base64
 import binascii
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -105,15 +105,39 @@ def dashboard() -> dict[str, Any]:
 def list_candidates():
     with identity_db() as conn:
         return [dict(r) for r in conn.execute(
-            """SELECT candidate_uid,linked_participant_id,name,phone,wechat,source,sex,age_group,
+            """SELECT c.candidate_uid,c.linked_participant_id,c.name,c.phone,c.wechat,c.source,c.sex,c.age_group,
                       beijing_based,identity_type,education,health_rating,work_schedule,chronotype,activity_mode,
                       fixed_position_ratio,screen_time_ratio,indoor_daylight,artificial_light_reliance,
                       outdoor_time,exposure_mechanism,work_district,home_district,commute_mode,
                       commute_duration,phone_os,willingness,pickup_method,
-                      availability,notes,source_seq,in_latest_snapshot,created_at_utc,updated_at_utc
-               FROM candidates
+                      availability,c.notes,source_seq,in_latest_snapshot,c.created_at_utc,c.updated_at_utc,
+                      COALESCE(cl.outcome,'uncontacted') contact_outcome,
+                      COALESCE(cl.next_action,'') contact_next_action,
+                      COALESCE(cl.contacted_at_utc,'') last_contacted_at_utc
+               FROM candidates c
+               LEFT JOIN contact_logs cl ON cl.id=(SELECT MAX(id) FROM contact_logs WHERE candidate_uid=c.candidate_uid)
                ORDER BY in_latest_snapshot DESC, linked_participant_id IS NOT NULL DESC, updated_at_utc DESC"""
         )]
+
+
+def add_candidate_contact(candidate_uid: str, data: dict[str, Any], operator: str) -> dict:
+    outcome = str(data.get("outcome") or "").strip()
+    allowed = {"uncontacted", "no_answer", "follow_up", "declined", "scheduled"}
+    if outcome not in allowed:
+        raise ValueError("invalid contact outcome")
+    now = now_iso()
+    with identity_db() as conn:
+        candidate = conn.execute("SELECT 1 FROM candidates WHERE candidate_uid=?", (candidate_uid,)).fetchone()
+        if not candidate:
+            raise ValueError("candidate not found")
+        conn.execute(
+            """INSERT INTO contact_logs(candidate_uid,contacted_at_utc,channel,outcome,next_action,notes,operator_username)
+               VALUES(?,?,?,?,?,?,?)""",
+            (candidate_uid, now, str(data.get("channel") or "").strip(), outcome,
+             str(data.get("next_action") or "").strip(), str(data.get("notes") or "").strip(), operator),
+        )
+    audit(operator, "candidate.contact", "candidate", candidate_uid, {"outcome": outcome})
+    return {"ok": True, "candidate_uid": candidate_uid, "outcome": outcome}
 
 
 def import_s0_file(data: dict[str, Any], operator: str) -> dict:
@@ -161,6 +185,7 @@ def update_candidate(candidate_uid: str, data: dict[str, Any], operator: str):
 def list_subjects():
     today = local_today()
     today_date = date.fromisoformat(today)
+    lighting_target = participant_service.form_target_date("evening").isoformat()
     with db() as conn:
         rows = [dict(r) for r in conn.execute("SELECT * FROM study_subjects ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'ready' THEN 1 WHEN 'scheduled' THEN 2 ELSE 3 END, participant_id")]
         counts = _questionnaire_counts(conn, [r["participant_id"] for r in rows])
@@ -191,17 +216,23 @@ def list_subjects():
                 except ValueError:
                     pass
             row["questionnaire_today_completed"] = counts.get(row["participant_id"], 0)
-            row["lighting_today"] = light_service.portal_light_state(row["participant_id"], today)
+            row["lighting_target_date"] = lighting_target
+            row["lighting_current"] = light_service.portal_light_state(row["participant_id"], lighting_target)
+            row["lighting_today"] = row["lighting_current"]
             prepared_at = row.get("preparation_started_at_utc") or ""
             row["gps_test_received"] = bool(prepared_at and conn.execute(
                 "SELECT 1 FROM gps_locations WHERE participant_id=? AND received_at_utc>=? LIMIT 1",
                 (row["participant_id"], prepared_at),
             ).fetchone())
             row["lighting_test_uploaded"] = bool(prepared_at and conn.execute(
-                "SELECT 1 FROM lighting_files WHERE participant_id=? AND is_test=1 AND upload_status='qc' AND uploaded_at_utc>=? LIMIT 1",
+                """SELECT 1 FROM lighting_files WHERE participant_id=? AND is_test=1 AND upload_status='qc'
+                   AND quality<>'unreadable' AND records_total>0 AND uploaded_at_utc>=? LIMIT 1""",
                 (row["participant_id"], prepared_at),
             ).fetchone())
             row["portal_enabled"] = bool(row.get("portal_token_id"))
+            device = conn.execute("SELECT light_serial,ax3_serial FROM device_packs WHERE pack_id=?", (row["pack_id"],)).fetchone()
+            row["light_serial"] = device["light_serial"] if device else ""
+            row["ax3_serial"] = device["ax3_serial"] if device else ""
             for secret_field in ("portal_token_id", "portal_token_salt", "portal_token_hash", "portal_token_ciphertext", "portal_token_created_at_utc"):
                 row.pop(secret_field, None)
     with identity_db() as conn:
@@ -237,6 +268,8 @@ def update_subject(participant_id: str, data: dict[str, Any], operator: str):
                 raise ValueError(f"{label}日期必须使用 YYYY-MM-DD") from exc
         if planned_start and planned_end and planned_end < planned_start:
             raise ValueError("结束日期不能早于开始日期")
+        if actual_period and planned_start != current_start:
+            raise ValueError("start_date is locked after formal start")
         start_field = "start_date" if actual_period else "expected_start"
         end_field = "end_date" if actual_period else "expected_end"
         now = now_iso()
@@ -367,6 +400,18 @@ def list_devices():
         return [dict(r) for r in conn.execute("SELECT * FROM device_packs ORDER BY pack_id")]
 
 
+def list_device_assignments(participant_id: str = ""):
+    with db() as conn:
+        if participant_id:
+            rows = conn.execute(
+                "SELECT * FROM device_assignments WHERE participant_id=? ORDER BY effective_from_utc",
+                (participant_id,),
+            )
+        else:
+            rows = conn.execute("SELECT * FROM device_assignments ORDER BY effective_from_utc DESC")
+        return [dict(row) for row in rows]
+
+
 def prepare_subject(participant_id: str, data: dict[str, Any], operator: str, origin: str) -> dict:
     pack = str(data.get("pack_id") or "").strip().upper()
     if not pack:
@@ -407,8 +452,54 @@ def prepare_subject(participant_id: str, data: dict[str, Any], operator: str, or
         )
         if claimed.rowcount != 1:
             raise ValueError("device pack is no longer available")
+        conn.execute(
+            """INSERT INTO device_assignments(participant_id,pack_id,effective_from_date,effective_from_utc,
+               reason,assigned_by,created_at_utc) VALUES(?,?,?,?,?,?,?)""",
+            (participant_id, pack, subject["expected_start"] or local_today(), now, "initial assignment", operator, now),
+        )
     audit(operator, "participant.prepare", "participant", participant_id, {"pack_id": pack, "logistics_status": logistics_status})
     return onboarding_card(participant_id, operator, origin)
+
+
+def cancel_preparation(participant_id: str, data: dict[str, Any], operator: str) -> dict:
+    reason = str(data.get("reason") or "").strip()
+    sent = bool(data.get("device_sent"))
+    if not reason:
+        raise ValueError("cancellation reason is required")
+    now = now_iso()
+    with db() as conn:
+        subject = conn.execute("SELECT * FROM study_subjects WHERE participant_id=?", (participant_id,)).fetchone()
+        if not subject or subject["status"] not in {"scheduled", "ready"} or not subject["preparation_started_at_utc"]:
+            raise ValueError("only a prepared scheduled/Ready participant can be cancelled")
+        pack = subject["pack_id"]
+        pack_status = "returning" if sent else "available"
+        conn.execute(
+            """UPDATE study_subjects SET status='scheduled',pack_id='',preparation_started_at_utc='',ready_at_utc='',
+               s1_status='',delivery_method='',logistics_status=?,tracking_number='',portal_token_id='',portal_token_salt='',
+               portal_token_hash='',portal_token_ciphertext='',portal_token_created_at_utc='',close_notes=?,updated_at_utc=?
+               WHERE participant_id=?""",
+            ("returning" if pack_status == "returning" else "cancelled", reason, now, participant_id),
+        )
+        conn.execute("UPDATE participants SET is_active=0 WHERE participant_id=?", (participant_id,))
+        if pack:
+            if pack_status == "available":
+                conn.execute(
+                    """UPDATE device_packs SET status='available',current_participant_id='',issued_date='',
+                       expected_return_date='',updated_at_utc=? WHERE pack_id=? AND current_participant_id=?""",
+                    (now, pack, participant_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE device_packs SET status='returning',updated_at_utc=? WHERE pack_id=? AND current_participant_id=?",
+                    (now, pack, participant_id),
+                )
+            conn.execute(
+                """UPDATE device_assignments SET effective_to_date=?,effective_to_utc=?,reason=reason || ?
+                   WHERE participant_id=? AND pack_id=? AND effective_to_utc=''""",
+                (local_today(), now, f"; preparation cancelled: {reason}", participant_id, pack),
+            )
+    audit(operator, "participant.prepare.cancel", "participant", participant_id, {"reason": reason, "pack_status": pack_status})
+    return {"ok": True, "participant_id": participant_id, "status": "scheduled", "pack_status": pack_status}
 
 
 def upsert_device(data: dict[str, Any], operator: str):
@@ -447,7 +538,10 @@ def start_subject(participant_id: str, data: dict[str, Any], operator: str, orig
         sub = conn.execute("SELECT * FROM study_subjects WHERE participant_id=?", (participant_id,)).fetchone()
         if not sub: raise ValueError("participant not found")
         if sub["status"] != "ready":
-            raise ValueError("participant is not Ready; GPS and Lighting tests must both succeed")
+            raise ValueError("participant is not Ready; S1, GPS and a readable Lighting test must succeed")
+        requested_pack = str(data.get("pack_id") or "").strip().upper()
+        if requested_pack and requested_pack != sub["pack_id"]:
+            raise ValueError("device pack cannot be changed while starting; use replace-device first")
         pack = sub["pack_id"]
         dev = conn.execute("SELECT * FROM device_packs WHERE pack_id=?", (pack,)).fetchone()
         if not dev: raise ValueError("device pack not found")
@@ -472,24 +566,40 @@ def start_subject(participant_id: str, data: dict[str, Any], operator: str, orig
                 (selector, portal_salt, portal_hash, encrypt_credential(f"{selector}.{portal_secret}"), now, participant_id),
             )
         conn.execute("UPDATE study_subjects SET status='running',pack_id=?,start_date=?,end_date=?,updated_at_utc=? WHERE participant_id=?", (pack,start,end,now,participant_id))
+        conn.execute(
+            """UPDATE device_assignments SET effective_from_date=?
+               WHERE participant_id=? AND pack_id=? AND effective_to_utc=''""",
+            (start, participant_id, pack),
+        )
         conn.execute("UPDATE device_packs SET status='in_use',current_participant_id=?,issued_date=?,expected_return_date=?,updated_at_utc=? WHERE pack_id=?", (participant_id,start,end,now,pack))
         conn.execute("UPDATE study_subjects SET logistics_status='in_use' WHERE participant_id=?", (participant_id,))
     audit(operator, "participant.start", "participant", participant_id, {"pack_id":pack,"start_date":start,"end_date":end})
     return onboarding_card(participant_id, operator, origin)
 
 
-def complete_subject(participant_id: str, operator: str) -> dict[str, Any]:
+def end_exposure(participant_id: str, data: dict[str, Any], operator: str, *, early: bool = False) -> dict[str, Any]:
     now = now_iso()
-    final_end = local_today()
+    final_end = str(data.get("final_end") or local_today()).strip()
+    reason = str(data.get("reason") or "").strip()
+    try:
+        final_day = date.fromisoformat(final_end)
+    except ValueError as exc:
+        raise ValueError("final_end must use YYYY-MM-DD") from exc
+    if early and not reason:
+        raise ValueError("early termination reason is required")
     with db() as conn:
         subject = conn.execute("SELECT * FROM study_subjects WHERE participant_id=?", (participant_id,)).fetchone()
         if not subject:
             raise ValueError("participant not found")
-        if subject["status"] != "running":
-            raise ValueError("only a running participant can be completed")
+        if subject["status"] != "running" or subject["awaiting_final_morning"]:
+            raise ValueError("only an active running participant can end exposure")
+        start_day = date.fromisoformat(subject["start_date"])
+        if final_day < start_day or final_day > date.fromisoformat(local_today()):
+            raise ValueError("final_end must be within the actual study period and not in the future")
         conn.execute(
-            "UPDATE study_subjects SET status='completed',final_end=?,updated_at_utc=? WHERE participant_id=?",
-            (final_end, now, participant_id),
+            """UPDATE study_subjects SET final_end=?,end_date=?,awaiting_final_morning=1,completion_type=?,
+               close_notes=?,updated_at_utc=? WHERE participant_id=?""",
+            (final_end, final_end, "early_termination" if early else "normal", reason, now, participant_id),
         )
         if subject["pack_id"]:
             conn.execute(
@@ -498,9 +608,44 @@ def complete_subject(participant_id: str, operator: str) -> dict[str, Any]:
                 (now, subject["pack_id"], participant_id),
             )
             conn.execute("UPDATE study_subjects SET logistics_status='returning' WHERE participant_id=?", (participant_id,))
+            conn.execute(
+                """UPDATE device_assignments SET effective_to_date=?,effective_to_utc=?
+                   WHERE participant_id=? AND pack_id=? AND effective_to_utc=''""",
+                (final_end, now, participant_id, subject["pack_id"]),
+            )
         conn.execute("UPDATE participants SET is_active=0 WHERE participant_id=?", (participant_id,))
-    audit(operator, "participant.complete", "participant", participant_id, {"pack_id": subject["pack_id"], "logistics_status": "returning"})
-    return {"ok": True, "participant_id": participant_id, "status": "completed", "logistics_status": "returning"}
+    action = "participant.terminate" if early else "participant.exposure.end"
+    audit(operator, action, "participant", participant_id, {"final_end": final_end, "reason": reason, "pack_id": subject["pack_id"]})
+    return {"ok": True, "participant_id": participant_id, "status": "running", "awaiting_final_morning": True, "final_end": final_end, "logistics_status": "returning"}
+
+
+def complete_subject(participant_id: str, data: dict[str, Any], operator: str) -> dict[str, Any]:
+    force = bool(data.get("force"))
+    reason = str(data.get("reason") or "").strip()
+    now = now_iso()
+    with db() as conn:
+        subject = conn.execute("SELECT * FROM study_subjects WHERE participant_id=?", (participant_id,)).fetchone()
+        if not subject or subject["status"] != "running" or not subject["awaiting_final_morning"] or not subject["final_end"]:
+            raise ValueError("formal exposure must end before closeout")
+        required = {
+            row["form_key"] for row in conn.execute(
+                "SELECT form_key FROM questionnaire_responses WHERE participant_id=? AND date_local=? AND form_key IN ('morning','s2')",
+                (participant_id, subject["final_end"]),
+            )
+        }
+        missing = {"morning", "s2"} - required
+        if missing and not force:
+            raise ValueError("final morning and S2 must be completed before closeout")
+        if force and not reason:
+            raise ValueError("forced closeout reason is required")
+        close_notes = reason if force else subject["close_notes"]
+        conn.execute(
+            "UPDATE study_subjects SET status='completed',awaiting_final_morning=0,close_notes=?,updated_at_utc=? WHERE participant_id=?",
+            (close_notes, now, participant_id),
+        )
+        conn.execute("UPDATE participants SET is_active=0 WHERE participant_id=?", (participant_id,))
+    audit(operator, "participant.closeout.force" if force else "participant.closeout", "participant", participant_id, {"reason": reason})
+    return {"ok": True, "participant_id": participant_id, "status": "completed", "logistics_status": subject["logistics_status"]}
 
 
 def update_device_flow(pack_id: str, action: str, operator: str) -> dict:
@@ -512,7 +657,10 @@ def update_device_flow(pack_id: str, action: str, operator: str) -> dict:
             raise ValueError("device pack not found")
         if action == "confirm-returned" and device["status"] == "returning":
             conn.execute("UPDATE device_packs SET status='returned',returned_date=?,updated_at_utc=? WHERE pack_id=?", (local_today(), now, pack_id))
-            conn.execute("UPDATE study_subjects SET logistics_status='returned',updated_at_utc=? WHERE participant_id=?", (now, device["current_participant_id"]))
+            conn.execute(
+                "UPDATE study_subjects SET logistics_status='returned',updated_at_utc=? WHERE participant_id=? AND pack_id=?",
+                (now, device["current_participant_id"], pack_id),
+            )
             status = "returned"
         elif action == "make-available" and device["status"] == "returned":
             conn.execute("UPDATE device_packs SET status='available',current_participant_id='',updated_at_utc=? WHERE pack_id=?", (now, pack_id))
@@ -521,6 +669,69 @@ def update_device_flow(pack_id: str, action: str, operator: str) -> dict:
             raise ValueError("invalid device logistics transition")
     audit(operator, f"device.{action}", "device_pack", pack_id)
     return {"ok": True, "pack_id": pack_id, "status": status}
+
+
+def replace_subject_device(participant_id: str, data: dict[str, Any], operator: str) -> dict:
+    new_pack = str(data.get("pack_id") or "").strip().upper()
+    effective_date = str(data.get("effective_date") or local_today()).strip()
+    reason = str(data.get("reason") or "device replacement").strip()
+    try:
+        date.fromisoformat(effective_date)
+    except ValueError as exc:
+        raise ValueError("effective_date must use YYYY-MM-DD") from exc
+    now = now_iso()
+    with db() as conn:
+        subject = conn.execute("SELECT * FROM study_subjects WHERE participant_id=?", (participant_id,)).fetchone()
+        preparation = bool(subject and subject["status"] in {"scheduled", "ready"} and subject["preparation_started_at_utc"])
+        if not subject or not (preparation or (subject["status"] == "running" and not subject["awaiting_final_morning"])):
+            raise ValueError("device replacement is available only during preparation, Ready or active running")
+        if not new_pack or new_pack == subject["pack_id"]:
+            raise ValueError("select a different available device pack")
+        replacement = conn.execute("SELECT * FROM device_packs WHERE pack_id=?", (new_pack,)).fetchone()
+        if not replacement or replacement["status"] != "available" or replacement["current_participant_id"]:
+            raise ValueError("replacement device pack is not available")
+        old_device = conn.execute("SELECT status FROM device_packs WHERE pack_id=?", (subject["pack_id"],)).fetchone()
+        replacement_status = old_device["status"] if preparation and old_device and old_device["status"] in {"outbound", "in_use"} else "in_use"
+        claimed = conn.execute(
+            """UPDATE device_packs SET status='in_use',current_participant_id=?,issued_date=?,
+               expected_return_date=?,updated_at_utc=? WHERE pack_id=? AND status='available' AND current_participant_id=''""",
+            (participant_id, effective_date, subject["end_date"] or subject["expected_end"], now, new_pack),
+        )
+        if claimed.rowcount != 1:
+            raise ValueError("replacement device pack is no longer available")
+        if replacement_status != "in_use":
+            conn.execute("UPDATE device_packs SET status=? WHERE pack_id=?", (replacement_status, new_pack))
+        old_pack = subject["pack_id"]
+        open_assignment = conn.execute(
+            """SELECT 1 FROM device_assignments
+               WHERE participant_id=? AND pack_id=? AND effective_to_utc='' LIMIT 1""",
+            (participant_id, old_pack),
+        ).fetchone()
+        if not open_assignment:
+            legacy_start = subject["start_date"] or effective_date
+            conn.execute(
+                """INSERT INTO device_assignments(participant_id,pack_id,effective_from_date,effective_from_utc,
+                   reason,assigned_by,created_at_utc) VALUES(?,?,?,?,?,?,?)""",
+                (participant_id, old_pack, legacy_start, f"{legacy_start}T00:00:00Z", "existing assignment", operator, now),
+            )
+        previous_date = (date.fromisoformat(effective_date) - timedelta(days=1)).isoformat()
+        conn.execute(
+            """UPDATE device_assignments SET effective_to_date=?,effective_to_utc=?
+               WHERE participant_id=? AND pack_id=? AND effective_to_utc=''""",
+            (previous_date, now, participant_id, old_pack),
+        )
+        conn.execute(
+            """INSERT INTO device_assignments(participant_id,pack_id,effective_from_date,effective_from_utc,
+               reason,assigned_by,created_at_utc) VALUES(?,?,?,?,?,?,?)""",
+            (participant_id, new_pack, effective_date, now, reason, operator, now),
+        )
+        conn.execute("UPDATE study_subjects SET pack_id=?,updated_at_utc=? WHERE participant_id=?", (new_pack, now, participant_id))
+        conn.execute(
+            "UPDATE device_packs SET status='returning',updated_at_utc=? WHERE pack_id=? AND current_participant_id=?",
+            (now, old_pack, participant_id),
+        )
+    audit(operator, "participant.device.replace", "participant", participant_id, {"old_pack": old_pack, "new_pack": new_pack, "effective_date": effective_date, "reason": reason})
+    return {"ok": True, "participant_id": participant_id, "old_pack": old_pack, "pack_id": new_pack, "effective_date": effective_date}
 
 
 def list_incidents():

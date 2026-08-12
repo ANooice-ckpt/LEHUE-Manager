@@ -1,5 +1,7 @@
 # LEHUE Participant Portal v0.4
 
+> Superseded for current behavior by README and current code. Lighting/OSS upload, S1/S2, preparation Ready and two-step closeout are now implemented; this document remains historical design context.
+
 v0.4 的目标不是做通用问卷平台，而是把本研究的**被试每日工作入口**并入 LEHUE。
 
 ## 1. 专属链接

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Closeout is now two-step: end formal exposure, retain Portal access for the final morning/S2/makeup, then complete or force-close with a recorded reason.
+- Added preparation cancellation and lawful early termination while preserving acquired data and device return facts.
+- Ready now requires completed S1, a real GPS return, and a parser-readable Lighting test with actual records.
+- Device replacement now works in preparation, Ready, and active running phases; formal start no longer accepts a silent pack override.
+- Running `start_date` is locked in ordinary edits; end dates remain adjustable.
+- Participant Portal offers prior-day Lighting reupload when the best raw is insufficient, unreadable, or clearly short.
+- Admin Lighting follows the current evening exposure target date; charging remains a reminder without a false confirmation record.
+- Added a minimal candidate contact-log workflow and lightweight Ready-dialog polling.
+
 - Update S0 import and candidate controls to the August 12 recruitment form:
   structure demographics/schedules, exposure-mechanism variables, commute and
   participation operations; derive the fixed-position/daylight four-quadrant

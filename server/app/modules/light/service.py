@@ -25,6 +25,7 @@ PARSER_VERSION = "light-v2"
 ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".txt"}
 CONTENT_DATE_WARNING = "文件已收到，但记录时间似乎与本实验日不符，请确认是否选错文件并重新上传"
 TIME_LABELS = ("modify time", "modified time", "record time", "recorded time", "date time", "datetime", "timestamp", "time")
+SHORT_COVERAGE_MINUTES = 8 * 60
 
 
 def now_iso() -> str:
@@ -213,6 +214,34 @@ def _record_date(value: str) -> date | None:
         return None
 
 
+def _record_datetime(value: str) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    normalized = text.replace("/", "-")
+    for candidate in (normalized, normalized.replace(".", "-", 2)):
+        try:
+            return datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+    match = re.search(r"(20\d{2})[-:](\d{1,2})[-:](\d{1,2})[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?", text)
+    if not match:
+        return None
+    try:
+        values = [int(value or 0) for value in match.groups()]
+        return datetime(*values)
+    except ValueError:
+        return None
+
+
+def _record_time_range(records: list[dict]) -> tuple[str, str, float | None]:
+    parsed = [value for record in records if (value := _record_datetime(record.get("modify_time"))) is not None]
+    if len(parsed) < 2:
+        return "", "", None
+    start, end = min(parsed), max(parsed)
+    return start.isoformat(), end.isoformat(), round((end - start).total_seconds() / 60, 1)
+
+
 def _content_date_warning(records: list[dict], date_local: str) -> str:
     if not date_local:
         return ""
@@ -251,6 +280,7 @@ def parse_light_path(filename: str, path: Path, date_local: str = "") -> dict:
     quality = "unreadable" if total <= 0 else "valid" if valid_pct >= VALID_THRESHOLD_PCT else "insufficient"
     photo_mean, photo_median, photo_max = _stats(photopic_values)
     melanopic_mean, melanopic_median, melanopic_max = _stats(melanopic_values)
+    record_start, record_end, coverage_minutes = _record_time_range(records)
     return {
         "records_expected": EXPECTED_SAMPLES,
         "records_total": total,
@@ -264,6 +294,9 @@ def parse_light_path(filename: str, path: Path, date_local: str = "") -> dict:
         "melanopic_mean": melanopic_mean,
         "melanopic_median": melanopic_median,
         "melanopic_max": melanopic_max,
+        "record_start": record_start,
+        "record_end": record_end,
+        "coverage_minutes": coverage_minutes,
         "parse_error": date_warning if total else "未识别到 Photopic Lux / Melanopic 光谱记录",
     }
 
@@ -332,6 +365,7 @@ def _parse_qc(filename: str, path: Path, date_local: str) -> dict:
             "records_saturated": 0, "valid_pct": 0.0, "quality": "unreadable",
             "photopic_mean": None, "photopic_median": None, "photopic_max": None,
             "melanopic_mean": None, "melanopic_median": None, "melanopic_max": None,
+            "record_start": "", "record_end": "", "coverage_minutes": None,
             "parse_error": str(exc),
         }
 
@@ -391,14 +425,15 @@ def store_upload_path(participant_id: str, date_local: str, filename: str, sourc
                     upload_uid,participant_id,date_local,original_filename,stored_path,storage_backend,object_key,file_size_bytes,sha256,
                     uploaded_at_utc,uploaded_by,parser_version,records_expected,records_total,records_valid,
                     records_saturated,valid_pct,quality,photopic_mean,photopic_median,photopic_max,
-                    melanopic_mean,melanopic_median,melanopic_max,parse_error
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    melanopic_mean,melanopic_median,melanopic_max,record_start,record_end,coverage_minutes,parse_error
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     upload_uid, participant_id, date_local, filename, object_key, storage.backend, object_key,
                     size_bytes, digest, now_iso(), uploaded_by, PARSER_VERSION,
                     summary["records_expected"], summary["records_total"], summary["records_valid"], summary["records_saturated"],
                     summary["valid_pct"], summary["quality"], summary["photopic_mean"], summary["photopic_median"],
-                    summary["photopic_max"], summary["melanopic_mean"], summary["melanopic_median"], summary["melanopic_max"], summary["parse_error"],
+                    summary["photopic_max"], summary["melanopic_mean"], summary["melanopic_median"], summary["melanopic_max"],
+                    summary["record_start"], summary["record_end"], summary["coverage_minutes"], summary["parse_error"],
                 ),
             )
             row = conn.execute("SELECT * FROM lighting_files WHERE upload_uid=?", (upload_uid,)).fetchone()
@@ -512,12 +547,14 @@ def rerun_qc(upload_uid: str) -> dict:
         conn.execute(
             """UPDATE lighting_files SET parser_version=?,records_expected=?,records_total=?,records_valid=?,
                records_saturated=?,valid_pct=?,quality=?,photopic_mean=?,photopic_median=?,photopic_max=?,
-               melanopic_mean=?,melanopic_median=?,melanopic_max=?,parse_error=?,upload_status='qc' WHERE upload_uid=?""",
+               melanopic_mean=?,melanopic_median=?,melanopic_max=?,record_start=?,record_end=?,coverage_minutes=?,
+               parse_error=?,upload_status='qc' WHERE upload_uid=?""",
             (
                 PARSER_VERSION, summary["records_expected"], summary["records_total"], summary["records_valid"],
                 summary["records_saturated"], summary["valid_pct"], summary["quality"], summary["photopic_mean"],
                 summary["photopic_median"], summary["photopic_max"], summary["melanopic_mean"],
-                summary["melanopic_median"], summary["melanopic_max"], summary["parse_error"], upload_uid,
+                summary["melanopic_median"], summary["melanopic_max"], summary["record_start"], summary["record_end"],
+                summary["coverage_minutes"], summary["parse_error"], upload_uid,
             ),
         )
         updated = conn.execute("SELECT * FROM lighting_files WHERE upload_uid=?", (upload_uid,)).fetchone()
@@ -576,6 +613,9 @@ def portal_light_state(participant_id: str, date_local: str) -> dict:
         "filename": row["original_filename"],
         "uploaded_at_utc": row["uploaded_at_utc"],
         "message": row["parse_error"],
+        "coverage_minutes": row.get("coverage_minutes"),
+        "record_start": row.get("record_start", ""),
+        "record_end": row.get("record_end", ""),
     }
 
 
@@ -670,6 +710,11 @@ def daily_qc_rows() -> list[dict]:
                         issues.append({"type": "unreadable_light", "label": "Lighting无法解析"})
                     if light and light["parse_error"] == CONTENT_DATE_WARNING:
                         issues.append({"type": "wrong_day_light", "label": CONTENT_DATE_WARNING})
+                    if light and light["coverage_minutes"] is not None and light["coverage_minutes"] < SHORT_COVERAGE_MINUTES:
+                        issues.append({
+                            "type": "short_light_coverage",
+                            "label": f"Lighting记录明显过短（{light['coverage_minutes'] / 60:.1f}h）",
+                        })
                     if gps_summary["point_count"] == 0:
                         issues.append({"type": "missing_gps", "label": "GPS"})
                     elif not gps:
@@ -695,6 +740,9 @@ def daily_qc_rows() -> list[dict]:
                     "light_valid_pct": light["valid_pct"] if light else None,
                     "light_records_valid": light["records_valid"] if light else None,
                     "light_records_total": light["records_total"] if light else None,
+                    "light_record_start": light["record_start"] if light else "",
+                    "light_record_end": light["record_end"] if light else "",
+                    "light_coverage_minutes": light["coverage_minutes"] if light else None,
                     "photopic_mean": light["photopic_mean"] if light else None,
                     "melanopic_mean": light["melanopic_mean"] if light else None,
                     "issues": issues, "missing_items": "、".join(item["label"] for item in issues),

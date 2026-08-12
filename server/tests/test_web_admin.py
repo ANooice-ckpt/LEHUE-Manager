@@ -7,6 +7,19 @@ import zipfile
 from pathlib import Path
 
 
+def test_admin_field_ui_keeps_running_cards_groups_qc_and_defaults_ra():
+    web_dir = Path(__file__).parents[1] / "app" / "web"
+    app_js = (web_dir / "app.js").read_text(encoding="utf-8")
+    style_css = (web_dir / "style.css").read_text(encoding="utf-8")
+
+    assert "$('pRa').value=me.username||''" in app_js
+    assert "subject.status!=='running'" in app_js
+    assert "subject.gps_last_received_at_utc" in app_js
+    assert "actions.querySelector('[data-onboarding]')" in app_js
+    assert "className='qc-date-group'" in app_js
+    assert ".qc-date-group td" in style_css
+
+
 def _reload_stack(monkeypatch, td: str, domain: str = "localhost"):
     monkeypatch.setenv("DATA_DIR", td)
     monkeypatch.setenv("DATA_ROOT", td)
@@ -118,13 +131,13 @@ def test_web_admin_flow(monkeypatch):
             assert client.get(f"/api/v1/portal/{rotated_portal.removeprefix('/p/')}").json()['owntracks']['available'] is True
             assert client.post('/api/v1/web/subjects/001/start', json={'pack_id':'D01','start_date':'2026-09-01','end_date':'2026-09-14'}, headers=h).status_code == 400
             assert client.post('/api/v1/web/subjects/001/start', json={'pack_id':'D01','start_date':'bad','end_date':'2026-09-14'}, headers=h).status_code == 400
-            edited_subject = client.post('/api/v1/web/subjects/001', json={'batch_id':'B2','assigned_ra':'ra01','planned_start':'2026-08-31','planned_end':'2026-09-15','notes':'late return'}, headers=h)
+            edited_subject = client.post('/api/v1/web/subjects/001', json={'batch_id':'B2','assigned_ra':'ra01','planned_start':'2026-09-01','planned_end':'2026-09-15','notes':'late return'}, headers=h)
             assert edited_subject.status_code == 200
             subject = next(x for x in client.get('/api/v1/web/subjects').json() if x['participant_id'] == '001')
-            assert subject['batch_id'] == 'B2' and subject['start_date'] == '2026-08-31' and subject['end_date'] == '2026-09-15'
+            assert subject['batch_id'] == 'B2' and subject['start_date'] == '2026-09-01' and subject['end_date'] == '2026-09-15'
             assert 'study_day' in subject
             device = next(x for x in client.get('/api/v1/web/devices').json() if x['pack_id'] == 'D01')
-            assert device['issued_date'] == '2026-08-31' and device['expected_return_date'] == '2026-09-15'
+            assert device['issued_date'] == '2026-09-01' and device['expected_return_date'] == '2026-09-15'
             assert client.post('/api/v1/web/devices', json={'pack_id':'D01','status':'repair'}, headers=h).status_code == 400
             invalid_period = client.post('/api/v1/web/subjects/001', json={'planned_start':'2026-09-16','planned_end':'2026-09-15'}, headers=h)
             assert invalid_period.status_code == 400
@@ -168,6 +181,11 @@ def test_web_admin_flow(monkeypatch):
             assert client.get('/admin/vendor/leaflet.css').status_code == 200
             assert client.get('/admin/vendor/leaflet.js').status_code == 200
 
+            with dbmod.db() as conn:
+                conn.execute("UPDATE study_subjects SET final_end='2026-09-15',awaiting_final_morning=1 WHERE participant_id='001'")
+                conn.execute("UPDATE device_packs SET status='returning' WHERE pack_id='D01'")
+                conn.execute("INSERT INTO questionnaire_responses(participant_id,date_local,study_day,form_key,answers_json,submitted_at_utc) VALUES('001','2026-09-15',15,'morning','{}','now')")
+                conn.execute("INSERT INTO questionnaire_responses(participant_id,date_local,study_day,form_key,answers_json,submitted_at_utc) VALUES('001','2026-09-15',15,'s2','{}','now')")
             completed = client.post('/api/v1/web/subjects/001/complete', json={}, headers=h)
             assert completed.status_code == 200 and completed.json()['status'] == 'completed'
             assert client.post('/api/v1/web/subjects/001/complete', json={}, headers=h).status_code == 400

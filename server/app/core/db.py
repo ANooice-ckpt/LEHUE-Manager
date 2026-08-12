@@ -144,6 +144,9 @@ CREATE TABLE IF NOT EXISTS lighting_files (
     parse_error TEXT NOT NULL DEFAULT '',
     upload_status TEXT NOT NULL DEFAULT 'qc',
     is_test INTEGER NOT NULL DEFAULT 0,
+    record_start TEXT NOT NULL DEFAULT '',
+    record_end TEXT NOT NULL DEFAULT '',
+    coverage_minutes REAL,
     FOREIGN KEY(participant_id) REFERENCES study_subjects(participant_id) ON DELETE CASCADE,
     UNIQUE(participant_id, date_local, sha256)
 );
@@ -163,6 +166,24 @@ CREATE TABLE IF NOT EXISTS device_packs (
     notes TEXT NOT NULL DEFAULT '',
     updated_at_utc TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS device_assignments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    participant_id TEXT NOT NULL,
+    pack_id TEXT NOT NULL,
+    effective_from_date TEXT NOT NULL,
+    effective_to_date TEXT NOT NULL DEFAULT '',
+    effective_from_utc TEXT NOT NULL,
+    effective_to_utc TEXT NOT NULL DEFAULT '',
+    reason TEXT NOT NULL DEFAULT '',
+    assigned_by TEXT NOT NULL DEFAULT '',
+    created_at_utc TEXT NOT NULL,
+    FOREIGN KEY(participant_id) REFERENCES study_subjects(participant_id) ON DELETE CASCADE,
+    FOREIGN KEY(pack_id) REFERENCES device_packs(pack_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_device_assignments_participant
+ON device_assignments(participant_id, effective_from_utc);
 
 CREATE TABLE IF NOT EXISTS incidents (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -221,6 +242,9 @@ LIGHTING_COLUMNS = {
     "object_key": "TEXT NOT NULL DEFAULT ''",
     "upload_status": "TEXT NOT NULL DEFAULT 'qc'",
     "is_test": "INTEGER NOT NULL DEFAULT 0",
+    "record_start": "TEXT NOT NULL DEFAULT ''",
+    "record_end": "TEXT NOT NULL DEFAULT ''",
+    "coverage_minutes": "REAL",
 }
 
 QUESTIONNAIRE_COLUMNS = {
@@ -313,9 +337,9 @@ def _normalize_device_statuses(conn: sqlite3.Connection) -> None:
 
 
 def refresh_subject_ready(conn: sqlite3.Connection, participant_id: str, ready_at_utc: str) -> bool:
-    """Persist Ready once both real preparation uploads have reached the database."""
+    """Persist Ready after S1 plus real, usable GPS and Lighting preparation returns."""
     subject = conn.execute(
-        "SELECT status,preparation_started_at_utc FROM study_subjects WHERE participant_id=?",
+        "SELECT status,preparation_started_at_utc,s1_status FROM study_subjects WHERE participant_id=?",
         (participant_id,),
     ).fetchone()
     if not subject or subject["status"] != "scheduled" or not subject["preparation_started_at_utc"]:
@@ -327,11 +351,12 @@ def refresh_subject_ready(conn: sqlite3.Connection, participant_id: str, ready_a
     ).fetchone()
     lighting_ok = conn.execute(
         """SELECT 1 FROM lighting_files
-           WHERE participant_id=? AND is_test=1 AND upload_status='qc' AND uploaded_at_utc>=?
+           WHERE participant_id=? AND is_test=1 AND upload_status='qc'
+             AND quality<>'unreadable' AND records_total>0 AND uploaded_at_utc>=?
            LIMIT 1""",
         (participant_id, prepared_at),
     ).fetchone()
-    if not gps_ok or not lighting_ok:
+    if subject["s1_status"] != "completed" or not gps_ok or not lighting_ok:
         return False
     conn.execute(
         "UPDATE study_subjects SET status='ready',ready_at_utc=?,updated_at_utc=? WHERE participant_id=? AND status='scheduled'",

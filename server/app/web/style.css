@@ -49,4 +49,6 @@ dialog::backdrop{background:rgba(20,22,19,.32);backdrop-filter:blur(2px)}
 #onboardingDialog .onboarding-facts{margin-bottom:10px}
 #onboardingDialog textarea{min-height:160px!important;font-size:11px;line-height:1.45}
 .incident-row{padding:8px 2px}
+.qc-date-group td{padding:9px 10px;background:#edf2ed;color:var(--text);border-top:2px solid #cfd8cf;border-bottom:1px solid #d7ded7}
+.qc-date-group:first-child td{border-top:0}.qc-date-group strong{font-size:13px}.qc-date-group span{margin-left:9px;color:var(--muted);font-size:11px;font-weight:400}.qc-data-row td:first-child{color:var(--muted);font-size:11px}
 @media(max-width:720px){header,main{width:min(100% - 24px,1440px)}header{padding-top:14px}.tabs{width:100%}.card{padding:13px}.section-head{align-items:flex-start;flex-direction:column;gap:8px}.dialog-body{padding:15px}.form-actions{flex-wrap:wrap}.form-actions .btn,.form-actions a.btn{flex:1 1 auto;text-align:center}}

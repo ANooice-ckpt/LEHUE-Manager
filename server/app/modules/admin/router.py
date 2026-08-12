@@ -245,6 +245,14 @@ async def candidate_update(candidate_uid: str, request: Request, operator=Depend
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@router.post("/api/v1/web/candidates/{candidate_uid}/contact")
+async def candidate_contact(candidate_uid: str, request: Request, operator=Depends(require_operator_write)):
+    try:
+        return service.add_candidate_contact(candidate_uid, await request.json(), operator.username)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @router.post("/api/v1/web/candidates/import-s0")
 async def import_s0(request: Request, operator=Depends(require_operator_write)):
     try:
@@ -325,9 +333,22 @@ async def prepare_subject(participant_id: str, request: Request, operator=Depend
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@router.post("/api/v1/web/subjects/{participant_id}/cancel-preparation")
+async def cancel_preparation(participant_id: str, request: Request, operator=Depends(require_operator_write)):
+    try:
+        return service.cancel_preparation(participant_id, await request.json(), operator.username)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @router.get("/api/v1/web/devices")
 def devices(operator=Depends(require_operator)):
     return service.list_devices()
+
+
+@router.get("/api/v1/web/device-assignments")
+def device_assignments(participant_id: str = "", operator=Depends(require_operator)):
+    return service.list_device_assignments(participant_id)
 
 
 @router.post("/api/v1/web/devices")
@@ -342,6 +363,14 @@ async def device_upsert(request: Request, operator=Depends(require_operator_writ
 async def device_flow(pack_id: str, request: Request, operator=Depends(require_operator_write)):
     try:
         return service.update_device_flow(pack_id, str((await request.json()).get("action") or ""), operator.username)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/api/v1/web/subjects/{participant_id}/replace-device")
+async def replace_device(participant_id: str, request: Request, operator=Depends(require_operator_write)):
+    try:
+        return service.replace_subject_device(participant_id, await request.json(), operator.username)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -369,10 +398,26 @@ async def lighting_upload(participant_id: str, date_local: str, filename: str, r
             path.unlink(missing_ok=True)
 
 
-@router.post("/api/v1/web/subjects/{participant_id}/complete")
-def complete_subject(participant_id: str, operator=Depends(require_operator_write)):
+@router.post("/api/v1/web/subjects/{participant_id}/end-exposure")
+async def end_exposure(participant_id: str, request: Request, operator=Depends(require_operator_write)):
     try:
-        return service.complete_subject(participant_id, operator.username)
+        return service.end_exposure(participant_id, await request.json(), operator.username)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/api/v1/web/subjects/{participant_id}/terminate")
+async def terminate_subject(participant_id: str, request: Request, operator=Depends(require_operator_write)):
+    try:
+        return service.end_exposure(participant_id, await request.json(), operator.username, early=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/api/v1/web/subjects/{participant_id}/complete")
+async def complete_subject(participant_id: str, request: Request, operator=Depends(require_operator_write)):
+    try:
+        return service.complete_subject(participant_id, await request.json(), operator.username)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

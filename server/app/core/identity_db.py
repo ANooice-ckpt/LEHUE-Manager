@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS contact_logs (
     contacted_at_utc TEXT NOT NULL,
     channel TEXT NOT NULL DEFAULT '',
     outcome TEXT NOT NULL DEFAULT '',
+    next_action TEXT NOT NULL DEFAULT '',
     notes TEXT NOT NULL DEFAULT '',
     operator_username TEXT NOT NULL DEFAULT '',
     FOREIGN KEY(candidate_uid) REFERENCES candidates(candidate_uid) ON DELETE SET NULL
@@ -113,6 +114,10 @@ CANDIDATE_COLUMNS = {
     "in_latest_snapshot": "INTEGER NOT NULL DEFAULT 1",
     "s0_import_uid": "TEXT NOT NULL DEFAULT ''",
     "s0_raw_json": "TEXT NOT NULL DEFAULT '{}'",
+}
+
+CONTACT_LOG_COLUMNS = {
+    "next_action": "TEXT NOT NULL DEFAULT ''",
 }
 
 
@@ -147,6 +152,10 @@ def init_identity_db() -> None:
         for name, declaration in CANDIDATE_COLUMNS.items():
             if name not in existing:
                 conn.execute(f"ALTER TABLE candidates ADD COLUMN {name} {declaration}")
+        existing_contacts = {row["name"] for row in conn.execute("PRAGMA table_info(contact_logs)")}
+        for name, declaration in CONTACT_LOG_COLUMNS.items():
+            if name not in existing_contacts:
+                conn.execute(f"ALTER TABLE contact_logs ADD COLUMN {name} {declaration}")
         conn.commit()
     finally:
         conn.close()
