@@ -12,3 +12,42 @@ input,select,textarea{border:1px solid var(--line);background:#fff;border-radius
 dialog{border:0;border-radius:18px;padding:0;box-shadow:0 28px 70px rgba(0,0,0,.24);width:min(620px,92vw)}dialog::backdrop{background:rgba(0,0,0,.28)}.dialog-body{padding:20px}.dialog-body h2{margin:0 0 12px}.dialog-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.dialog-grid label{display:grid;gap:4px}.dialog-grid .full{grid-column:1/-1}
 .map-dialog{width:min(1040px,96vw)}.map-dialog-head{justify-content:space-between}.map-dialog-head h2{margin-bottom:2px}.track-ranges{display:flex;gap:7px}.track-ranges .active{background:#111;color:#fff;border-color:#111}.track-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:14px 0 10px}.track-stats>div{padding:9px 11px;border:1px solid var(--line);border-radius:11px;background:var(--soft2)}.track-stats span{display:block;font-size:11px;color:var(--muted)}.track-stats strong{display:block;margin-top:3px;font-size:14px}.track-message{min-height:22px}.track-message.error{color:var(--danger)}#gpsTrackMap{height:min(60vh,560px);min-height:360px;border:1px solid var(--line);border-radius:14px;background:var(--soft)}
 @media(max-width:1100px){.source-grid{grid-template-columns:repeat(2,1fr)}.incident-create{grid-template-columns:1fr 1fr}.incident-create #iSummary{grid-column:span 2}.candidate-create{grid-template-columns:repeat(3,1fr)}}@media(max-width:720px){header{align-items:flex-start;flex-direction:column}.split,.three{grid-template-columns:1fr}.form-grid{grid-template-columns:1fr 1fr}.source-grid{grid-template-columns:1fr}.form-grid .wide{grid-column:1/-1}.auth-card{margin-top:5vh}.track-stats{grid-template-columns:1fr 1fr}#gpsTrackMap{min-height:320px}.map-dialog-head{align-items:flex-start}.arch-flow{grid-template-columns:1fr}.flow-arrow{height:10px;text-align:center;transform:rotate(90deg)}.incident-create,.candidate-create{grid-template-columns:1fr}.incident-create #iSummary{grid-column:auto}.candidate-filters,.subject-filters{width:100%;flex-wrap:wrap}.candidate-filters input,.subject-filters input{width:100%}.candidate-filters select,.subject-filters select{flex:1}.subject-actions{flex-wrap:wrap}.owntracks-guide>div{display:grid}}
+
+/* Quiet, information-dense application shell */
+body{background:var(--bg);line-height:1.5}
+header,main{width:min(1440px,94vw)}
+header{padding:22px 0 10px;align-items:end}
+h1{font-size:22px;letter-spacing:-.01em}
+.subtitle{font-size:12px;margin-top:2px}
+.tabs{width:max-content;max-width:100%;overflow-x:auto;gap:2px;margin:8px 0 14px;padding:3px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.72)}
+.tab,.btn{border-radius:8px;padding:7px 11px}
+.tab{border:0;background:transparent;white-space:nowrap}
+.btn.small{padding:4px 8px}
+.metrics{margin-bottom:12px}
+.metric{padding:12px 14px}
+.metric .value{font-size:22px;margin-top:4px}
+.card{padding:16px;margin-bottom:12px}
+.card h2{font-size:15px;margin-bottom:9px}
+.split,.three{gap:12px}
+.section-head{gap:18px;margin-bottom:12px}
+.section-head .muted{font-size:11px}
+input,select,textarea{border-radius:8px;outline:none}
+input:focus,select:focus,textarea:focus{border-color:#aeb2aa;box-shadow:0 0 0 2px rgba(23,24,22,.06)}
+.form-grid{gap:8px}.form-actions{margin-top:10px}
+.table-wrap{border-radius:10px}
+th,td{padding:7px 9px}
+th{font-size:10px;font-weight:650;letter-spacing:.025em}
+tbody tr:hover{background:#fafbf8}
+.badge{font-size:10px}.gps-cell{gap:2px}.subject-actions{gap:4px}
+.source-grid{gap:8px}.source{padding:10px;border-radius:10px}
+.source dl{margin-top:5px}.source dt{margin-top:4px}.source dd{line-height:1.35}
+dialog{border:1px solid rgba(255,255,255,.5);border-radius:16px;max-height:88vh;box-shadow:0 24px 64px rgba(0,0,0,.2)}
+dialog::backdrop{background:rgba(20,22,19,.32);backdrop-filter:blur(2px)}
+.dialog-body{padding:18px;overflow:auto;max-height:88vh}
+.dialog-body h2{font-size:18px}.dialog-grid label{font-size:12px}
+.owntracks-guide{padding:10px 11px}
+#onboardingDialog{width:min(720px,92vw)}
+#onboardingDialog .source-grid{grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:10px}
+#onboardingDialog textarea{min-height:160px!important;font-size:11px;line-height:1.45}
+.incident-row{padding:8px 2px}
+@media(max-width:720px){header,main{width:min(100% - 24px,1440px)}header{padding-top:14px}.tabs{width:100%}.card{padding:13px}.section-head{align-items:flex-start;flex-direction:column;gap:8px}#onboardingDialog .source-grid{grid-template-columns:1fr}.dialog-body{padding:15px}.form-actions{flex-wrap:wrap}.form-actions .btn,.form-actions a.btn{flex:1 1 auto;text-align:center}}
