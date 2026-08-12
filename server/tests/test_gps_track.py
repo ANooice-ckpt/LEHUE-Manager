@@ -137,3 +137,58 @@ def test_backfill_state_and_daily_acquisition_coverage(monkeypatch, tmp_path):
     assert sparse["complete"] is False
     assert "low_point_count" in sparse["issues"]
     assert "early_last_point" in sparse["issues"]
+
+
+def test_delivery_delay_is_telemetry_and_latest_received_uses_received_time(monkeypatch, tmp_path):
+    dbmod, gps = _reload(monkeypatch, tmp_path)
+    recorded = datetime(2026, 8, 11, 1, tzinfo=timezone.utc)
+    received = [recorded + timedelta(hours=4), recorded + timedelta(minutes=1)]
+    with dbmod.db() as conn:
+        conn.execute(
+            "INSERT INTO participants(participant_id,secret_salt,secret_hash,created_at_utc) VALUES('001','s','h',?)",
+            (gps.iso_utc(recorded),),
+        )
+        for index in range(2):
+            point_time = recorded + timedelta(seconds=index * 10)
+            cur = conn.execute(
+                "INSERT INTO raw_events(participant_id,event_uid,message_type,recorded_at_utc,received_at_utc,raw_json) VALUES(?,?,?,?,?,'{}')",
+                ("001", f"delay-{index}", "location", gps.iso_utc(point_time), gps.iso_utc(received[index])),
+            )
+            conn.execute(
+                "INSERT INTO gps_locations(raw_event_id,participant_id,recorded_at_utc,received_at_utc,lat,lon,accuracy_m) VALUES(?,?,?,?,0,0,10)",
+                (cur.lastrowid, "001", gps.iso_utc(point_time), gps.iso_utc(received[index])),
+            )
+
+    summary = gps.qc_summary("001", "2026-08-11")
+
+    assert summary["status"] == "OK"
+    assert summary["warnings"] == []
+    assert summary["delayed_delivery_count"] == 1
+    assert summary["max_delivery_delay_seconds"] == 4 * 3600
+    assert summary["last_received_at_utc"] == gps.iso_utc(received[0])
+
+
+def test_real_gap_and_accuracy_still_warn(monkeypatch, tmp_path):
+    dbmod, gps = _reload(monkeypatch, tmp_path)
+    start = datetime(2026, 8, 11, 1, tzinfo=timezone.utc)
+    with dbmod.db() as conn:
+        conn.execute(
+            "INSERT INTO participants(participant_id,secret_salt,secret_hash,created_at_utc) VALUES('001','s','h',?)",
+            (gps.iso_utc(start),),
+        )
+        for index, seconds in enumerate((0, 600)):
+            point_time = start + timedelta(seconds=seconds)
+            cur = conn.execute(
+                "INSERT INTO raw_events(participant_id,event_uid,message_type,recorded_at_utc,received_at_utc,raw_json) VALUES(?,?,?,?,?,'{}')",
+                ("001", f"quality-{index}", "location", gps.iso_utc(point_time), gps.iso_utc(point_time)),
+            )
+            conn.execute(
+                "INSERT INTO gps_locations(raw_event_id,participant_id,recorded_at_utc,received_at_utc,lat,lon,accuracy_m) VALUES(?,?,?,?,0,0,80)",
+                (cur.lastrowid, "001", gps.iso_utc(point_time), gps.iso_utc(point_time)),
+            )
+
+    summary = gps.qc_summary("001", "2026-08-11")
+
+    assert summary["status"] == "WARNING"
+    assert f"max_gap>{gps.settings.qc_gap_warning_seconds}s" in summary["warnings"]
+    assert f"accuracy>{gps.settings.qc_poor_accuracy_m}m:2" in summary["warnings"]

@@ -395,8 +395,6 @@ def qc_summary(participant_id: str, date_str: str | None = None) -> dict[str, An
         warnings.append(f"max_gap>{settings.qc_gap_warning_seconds}s")
     if poor_acc:
         warnings.append(f"accuracy>{settings.qc_poor_accuracy_m}m:{poor_acc}")
-    if delayed:
-        warnings.append(f"delivery_delay>{settings.qc_delay_warning_seconds}s:{delayed}")
 
     return {
         "participant_id": participant_id,
@@ -407,7 +405,7 @@ def qc_summary(participant_id: str, date_str: str | None = None) -> dict[str, An
         "location_count": len(rows),
         "first_recorded_at_utc": rows[0]["recorded_at_utc"],
         "last_recorded_at_utc": rows[-1]["recorded_at_utc"],
-        "last_received_at_utc": rows[-1]["received_at_utc"],
+        "last_received_at_utc": iso_utc(max(recv_times)),
         "median_gap_seconds": round(median(gaps), 2) if gaps else None,
         "max_gap_seconds": round(max_gap, 2),
         "median_accuracy_m": round(median(accs), 2) if accs else None,
