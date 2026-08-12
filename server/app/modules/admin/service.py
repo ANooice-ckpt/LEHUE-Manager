@@ -452,10 +452,49 @@ def list_incidents():
         )]
     domain = settings.domain.strip().rstrip("/")
     origin = f"https://{domain}" if domain not in {"", "localhost", "127.0.0.1"} else "http://127.0.0.1:8085"
+    groups: dict[tuple[str, str, str], dict[str, Any]] = {}
     for row in rows:
         ciphertext = row.pop("portal_token_ciphertext", "")
-        row["portal_url"] = f"{origin}/p/{decrypt_credential(ciphertext)}" if ciphertext else ""
-    return rows
+        portal_url = f"{origin}/p/{decrypt_credential(ciphertext)}" if ciphertext else ""
+        participant_id, date_local = row["participant_id"], row["date_local"]
+        # Records without both canonical grouping fields remain separate rather
+        # than collapsing unrelated manual notes into one anonymous group.
+        key = (participant_id, date_local, "") if participant_id and date_local else (participant_id, date_local, row["incident_uid"])
+        group = groups.setdefault(key, {
+            "participant_id": participant_id,
+            "date_local": date_local,
+            "portal_url": portal_url,
+            "issues": [],
+            "updated_at_utc": row["updated_at_utc"],
+        })
+        group["issues"].append({
+            name: row[name]
+            for name in ("incident_uid", "source", "incident_type", "summary", "notes", "status", "severity")
+        })
+        summary_prefix = f"{participant_id} 暴露日 {date_local}："
+        if group["issues"][-1]["summary"].startswith(summary_prefix):
+            group["issues"][-1]["summary"] = group["issues"][-1]["summary"][len(summary_prefix):]
+        group["updated_at_utc"] = max(group["updated_at_utc"], row["updated_at_utc"])
+
+    result = []
+    for group in groups.values():
+        open_issues = [item for item in group["issues"] if item["status"] != "closed"]
+        contact_issues = open_issues or group["issues"]
+        group["status"] = "open" if open_issues else "closed"
+        group["open_count"] = len(open_issues)
+        group["issue_count"] = len(group["issues"])
+        lines = [str(item["summary"] or item["incident_type"] or item["source"] or "采集情况待确认") for item in contact_issues]
+        numbered = "\n".join(f"{index}. {summary}" for index, summary in enumerate(lines, 1))
+        group["contact_text"] = (
+            f"LEHUE 采集提醒｜被试 {group['participant_id']}\n"
+            f"{group['date_local']} 实验日有 {len(lines)} 项需要确认：\n{numbered}\n"
+            "请打开被试入口补充或检查；如已处理可忽略。"
+            + (f"\n入口：{group['portal_url']}" if group["portal_url"] else "")
+        )
+        result.append(group)
+    result.sort(key=lambda group: group["updated_at_utc"], reverse=True)
+    result.sort(key=lambda group: group["status"] == "closed")
+    return result
 
 
 def add_incident(data: dict[str, Any], operator: str):

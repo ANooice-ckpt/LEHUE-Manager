@@ -137,7 +137,14 @@ def test_web_admin_flow(monkeypatch):
             assert len(client.get('/api/v1/web/lighting').json()) == 1
             assert client.get('/api/v1/web/daily-qc').status_code == 200
             assert client.post('/api/v1/web/incidents', json={'participant_id':'001','date_local':'2026-09-02','source':'GPS','incident_type':'offline','summary':'GPS offline'}, headers=h).status_code == 200
-            incident_uid = client.get('/api/v1/web/incidents').json()[0]['incident_uid']
+            assert client.post('/api/v1/web/incidents', json={'participant_id':'001','date_local':'2026-09-02','source':'Lighting','incident_type':'missing','summary':'Lighting missing'}, headers=h).status_code == 200
+            incident_group = client.get('/api/v1/web/incidents').json()[0]
+            assert incident_group['participant_id'] == '001' and incident_group['date_local'] == '2026-09-02'
+            assert incident_group['open_count'] == 2 and incident_group['issue_count'] == 2
+            assert '有 2 项需要确认' in incident_group['contact_text']
+            assert 'GPS offline' in incident_group['contact_text']
+            assert 'Lighting missing' in incident_group['contact_text']
+            incident_uid = incident_group['issues'][0]['incident_uid']
             assert client.post(f'/api/v1/web/incidents/{incident_uid}/status', json={'status':'handling'}, headers=h).status_code == 400
             with dbmod.db() as conn:
                 conn.execute("UPDATE incidents SET status='handling' WHERE incident_uid=?", (incident_uid,))
@@ -146,11 +153,11 @@ def test_web_admin_flow(monkeypatch):
             with dbmod.db() as conn:
                 conn.execute("UPDATE incidents SET status='resolved' WHERE incident_uid=?", (incident_uid,))
             dbmod.init_db()
-            assert client.get('/api/v1/web/incidents').json()[0]['status'] == 'closed'
+            assert client.get('/api/v1/web/incidents').json()[0]['status'] == 'open'
             assert client.post(f'/api/v1/web/incidents/{incident_uid}/status', json={'status':'closed'}, headers=h).status_code == 200
             assert client.post(f'/api/v1/web/incidents/{incident_uid}/status', json={'status':'open'}, headers=h).status_code == 200
             d = client.get('/api/v1/web/dashboard').json()
-            assert d['metrics']['running'] == 1 and d['metrics']['open_incidents'] == 1
+            assert d['metrics']['running'] == 1 and d['metrics']['open_incidents'] == 2
             assert client.get('/api/v1/web/data-sources').status_code == 404
             assert client.get('/admin').status_code == 200
             assert client.get('/admin/vendor/leaflet.css').status_code == 200
