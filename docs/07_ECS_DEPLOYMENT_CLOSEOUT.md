@@ -28,9 +28,18 @@ Lighting storage and long-lived access keys.
 bash scripts/server_start.sh test
 ```
 
-Startup runs `server_doctor.sh` first. The application itself also rejects a
-missing or invalid credential-encryption key, so a preflight cannot mask a bad
-runtime.
+Startup builds the API image from the current checkout, then doctor validates
+that exact candidate image, constructs a real Fernet instance, imports the app
+and starts an isolated candidate API health probe. Only after those checks pass
+does Compose replace the running container. An existing instance does not need
+setup again for ordinary updates.
+
+The normal TEST update path is only:
+
+```bash
+git pull --ff-only
+bash scripts/server_start.sh test
+```
 
 ## ECS doctor and real smoke test
 
@@ -40,14 +49,21 @@ LEHUE_ENV=test bash scripts/server_smoke_test.sh
 ```
 
 Doctor checks only hard deployment dependencies: Docker/Compose, `.env`, public
-HTTPS hostname, application configuration and (when running) SQLite integrity.
+HTTPS hostname, the newly built candidate image/Fernet key/API process and
+(when running) SQLite integrity.
 
 The smoke test is intentionally TEST-only and rotates the selected synthetic
 participant's GPS password and Portal link. It then logs in through HTTPS,
 opens the Portal and sends a real OwnTracks point. In OSS mode it uses the
-production RAM Role/storage adapter to obtain a real presigned URL, validates
-the browser CORS preflight, uploads and HEAD-checks a unique small object, then
-deletes it. The GPS smoke point remains normal TEST data.
+production RAM Role/storage adapter. It first performs an internal-endpoint SDK
+PutObject/HEAD using the ECS credential, then separately validates the public
+browser CORS preflight and V4 presigned PUT/HEAD. Failures report a sanitized
+stage, endpoint host, HTTP status, OSS XML Code/Message and RequestId; URL query
+signatures and credentials are never printed. The GPS smoke point remains
+normal TEST data.
+
+All repository shell scripts are invoked with `bash scripts/...`; executable
+bits are therefore not a deployment prerequisite on Windows-origin checkouts.
 
 ## Portable TEST snapshot
 

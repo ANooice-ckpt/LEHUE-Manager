@@ -28,6 +28,23 @@ def test_local_light_storage_round_trip(tmp_path):
     assert not storage.exists(key)
 
 
+def test_oss_presign_pins_actual_content_type_and_metadata():
+    class FakeBucket:
+        def sign_url(self, method, key, expires, **kwargs):
+            self.call = (method, key, expires, kwargs)
+            return "https://bucket.oss-cn-test.aliyuncs.com/object?redacted-signature"
+
+    storage = OSSLightStorage.__new__(OSSLightStorage)
+    storage.public_bucket = FakeBucket()
+    signed = storage.presign_put("raw/lighting/test.csv", "a" * 64, 300)
+
+    assert signed["headers"] == {
+        "Content-Type": "application/octet-stream",
+        "x-oss-meta-sha256": "a" * 64,
+    }
+    assert storage.public_bucket.call[3]["headers"] == signed["headers"]
+
+
 @pytest.mark.skipif(os.getenv("RUN_OSS_INTEGRATION") != "1", reason="real OSS integration is opt-in")
 def test_real_oss_round_trip(tmp_path):
     storage = OSSLightStorage(os.environ["OSS_BUCKET"])
@@ -38,6 +55,7 @@ def test_real_oss_round_trip(tmp_path):
         import requests
         digest = hashlib.sha256(source.read_bytes()).hexdigest()
         signed = storage.presign_put(key, digest, 300)
+        assert signed["headers"]["Content-Type"] == "application/octet-stream"
         response = requests.put(signed["url"], data=source.read_bytes(), headers=signed["headers"], timeout=30)
         response.raise_for_status()
         assert storage.exists(key)

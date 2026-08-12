@@ -131,7 +131,7 @@ server\.venv\Scripts\python.exe -m pytest server\tests\test_light_storage.py -q
 
 OSS 模式下 Participant Portal 先登记 `pending` 并取得约 15 分钟有效、只允许写入指定 object key 的 PUT URL；浏览器直接上传 OSS，FastAPI 不接收 40 MB 文件。OSS 到件后记录变为 `uploaded`，ECS 临时下载、校验 size/SHA256 并执行现有 QC，成功后状态为 `qc`。中断后重新选择同一文件会复用原 `upload_uid` 继续处理。本地 `test + local` 仍走原上传接口。
 
-直传 bucket 需配置 CORS：允许 Participant Portal 的 HTTPS Origin、`PUT` 方法和 `x-oss-meta-sha256` 请求头。不要使用 `*` Origin 承载正式实验。
+直传 bucket 需配置 CORS：允许 Participant Portal 的 HTTPS Origin、`PUT` 方法以及 `content-type`、`x-oss-meta-sha256` 请求头。不要使用 `*` Origin 承载正式实验。
 
 ## OwnTracks 冻结参数与 Acquisition QC
 

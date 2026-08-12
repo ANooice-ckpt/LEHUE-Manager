@@ -1,5 +1,6 @@
 services:
   api:
+    image: lehue-manager-api:local
     build:
       context: ./server
     container_name: lehue-api
@@ -14,6 +15,12 @@ services:
       - ./server/data:/app/data
     expose:
       - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 10s
+      timeout: 6s
+      retries: 6
+      start_period: 10s
 
   caddy:
     image: caddy:2-alpine

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Build and health-probe the current candidate API image before replacing a
+  running ECS container; validate the configured Fernet key with Fernet itself.
+- Preserve existing PI accounts during upgrades and refuse to replace an
+  invalid encryption key when runtime data already exists.
+- Make the deployment smoke test self-contained, stage-oriented, and able to
+  isolate internal RAM Role SDK writes from public V4 presigned PUT failures.
+- Pin `Content-Type` in OSS V4 PUT signatures and report sanitized OSS error
+  fields without exposing presigned queries or credentials.
+
 ## v0.5.5 - ECS deployment closeout
 
 - Fail application startup when `CREDENTIAL_ENCRYPTION_KEY` is missing or invalid;

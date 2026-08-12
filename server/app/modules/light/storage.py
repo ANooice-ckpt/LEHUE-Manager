@@ -100,7 +100,13 @@ class OSSLightStorage:
 
     def presign_put(self, object_key: str, sha256: str, expires_seconds: int) -> dict:
         key = _safe_key(object_key)
-        headers = {"x-oss-meta-sha256": sha256}
+        # Browsers and HTTP clients otherwise choose their own Content-Type.
+        # OSS V4 includes Content-Type in the canonical request, so the exact
+        # value sent by the client must also be present when the URL is signed.
+        headers = {
+            "Content-Type": "application/octet-stream",
+            "x-oss-meta-sha256": sha256,
+        }
         return {
             "url": self.public_bucket.sign_url("PUT", key, expires_seconds, headers=headers, slash_safe=True),
             "headers": headers,

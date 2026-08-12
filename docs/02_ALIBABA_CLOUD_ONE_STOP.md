@@ -94,7 +94,7 @@ ENABLE_DOCS=true
 ## H. 启动容器
 
 ```bash
-./scripts/server_start.sh test
+bash scripts/server_start.sh test
 docker compose ps
 ```
 

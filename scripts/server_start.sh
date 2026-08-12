@@ -29,4 +29,10 @@ bash ./scripts/server_doctor.sh "$ENVIRONMENT"
 echo "LEHUE ENV: ${LEHUE_ENV^^}"
 echo "Data dir : ./server/data/$LEHUE_ENV"
 echo "Environment is locked until the containers stop."
-docker compose up -d --build
+if docker compose up -d --no-build --wait --wait-timeout 60; then
+  echo '[OK]   deployed containers are healthy'
+else
+  echo '[FAIL] container replacement did not become healthy; recent API logs follow' >&2
+  docker compose logs --tail=100 api >&2 || true
+  exit 1
+fi
