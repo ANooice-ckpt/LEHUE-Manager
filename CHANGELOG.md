@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Unify Admin backup downloads, portable TEST snapshots, and timed OSS backups
+  as one State Bundle containing both SQLite databases, GPS raw, manifest, and
+  credential metadata while retaining Lighting as canonical OSS references.
+- Validate ZIP/SQLite/version/environment and Lighting portability before
+  restore, create a rollback bundle, and re-encrypt imported credentials with
+  the target server key without replacing infrastructure configuration.
+
 - Restrict GPS ingest to running participants and make study lifecycle changes
   explicit: scheduled → running → completed, with atomic device return and GPS
   credential deactivation while the completed Portal remains read-only.

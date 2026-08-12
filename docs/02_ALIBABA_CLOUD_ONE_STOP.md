@@ -181,7 +181,7 @@ BACKUP_OSS_BUCKET=lehue-private-backup-test
 BACKUP_OSS_PREFIX=lehue-backups
 ```
 
-脚本会在线快照 `lehue.sqlite3`、`lehue_identity.sqlite3`，加入 GPS raw JSONL 后上传 OSS；Lighting raw 已是 canonical OSS object，不重复备份。先手工测试：
+脚本生成统一 State Bundle（`lehue.sqlite3`、`lehue_identity.sqlite3`、GPS raw、manifest 与 credential 元数据）后上传 OSS；Lighting raw 已是 canonical OSS object，只记录 bucket/object key/SHA256/size 引用，不重复备份。先手工测试：
 
 ```bash
 cd /opt/LEHUE-Manager

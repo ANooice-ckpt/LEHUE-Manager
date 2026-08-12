@@ -87,7 +87,7 @@
         <div class="form-grid"><input id="uUsername" placeholder="用户名，如 ra01"><input id="uDisplay" placeholder="显示名称"><select id="uRole"><option value="ra">RA</option><option value="pi">PI</option></select><input id="uPassword" type="password" placeholder="密码（留空自动生成）"></div>
         <div class="form-actions"><button class="btn primary" id="addUserBtn">新增协作者</button></div>
       </div>
-      <div class="card"><h2>系统状态备份</h2><div class="callout"><strong>一键下载一致性快照</strong><span class="muted">包含账号、S0/候选、被试、设备、异常、GPS、问卷与 Lighting QC 元数据；不包含当前登录 session、raw GPS JSONL 和 raw Lighting 大文件。</span></div><div class="form-actions"><button class="btn primary" id="backupBtn">下载系统状态备份</button></div></div>
+      <div class="card"><h2>State Bundle</h2><div class="callout"><strong>下载或整包恢复当前状态</strong><span class="muted">包含两份数据库、GPS raw 与 credential 元数据；Lighting 只保存私有 OSS 对象引用，不复制大文件。恢复不会改写服务器 .env、域名、RAM Role 或 OSS endpoint，并会先保存 rollback。</span></div><div class="form-actions"><button class="btn primary" id="backupBtn">下载当前状态</button><input id="stateBundleFile" type="file" accept=".zip,application/zip"><button class="btn" id="restoreStateBundleBtn">上传并替换状态</button></div></div>
     </div>
     <div class="card"><h2>当前账号</h2><div class="table-wrap"><table><thead><tr><th>用户名</th><th>显示名称</th><th>角色</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="userRows"></tbody></table></div></div>
   </section>

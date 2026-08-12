@@ -13,14 +13,14 @@ if str(SERVER_DIR) not in sys.path:
 
 from app.core.config import settings  # noqa: E402
 from app.core.oss_client import oss_bucket  # noqa: E402
-from app.modules.admin.backup import create_system_backup  # noqa: E402
+from app.core.state_bundle import create_temporary_state_bundle  # noqa: E402
 
 
 def main() -> None:
     if not settings.backup_oss_bucket:
         raise RuntimeError("BACKUP_OSS_BUCKET is required")
 
-    zip_path_text, temp_dir_text = create_system_backup(include_gps_raw=True)
+    zip_path_text, temp_dir_text = create_temporary_state_bundle()
     zip_path, temp_dir = Path(zip_path_text), Path(temp_dir_text)
     try:
         stamp = datetime.now(timezone.utc).strftime("%Y/%m/%d")

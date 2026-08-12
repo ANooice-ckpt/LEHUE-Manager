@@ -65,7 +65,7 @@ normal TEST data.
 All repository shell scripts are invoked with `bash scripts/...`; executable
 bits are therefore not a deployment prerequisite on Windows-origin checkouts.
 
-## Portable TEST snapshot
+## Portable State Bundle
 
 Export:
 
@@ -77,27 +77,31 @@ Copy the ZIP from `server/data/snapshots/` between Windows TEST and ECS TEST,
 then restore with:
 
 ```bash
-bash scripts/server_snapshot.sh restore LEHUE_TEST_snapshot_YYYYMMDD_HHMMSSZ.zip
+bash scripts/server_snapshot.sh restore LEHUE_TEST_state_bundle_YYYYMMDD_HHMMSSZ.zip
 ```
 
-The archive contains both SQLite databases, GPS raw JSONL, version/environment
-metadata, the Lighting canonical-object manifest, and the credential encryption
-key needed to keep recoverable GPS/Portal credentials usable. It is sensitive.
-Lighting raw bytes are not copied; OSS object keys remain canonical.
+The State Bundle is also the format used by Admin downloads and timed OSS
+backups. It contains both SQLite databases, GPS raw JSONL, version/environment
+metadata, the Lighting canonical-object manifest, and credential metadata. It
+is sensitive. Lighting raw bytes are not copied; bucket/object key/SHA256/size
+references remain canonical.
 
-Restore is hard-coded to `LEHUE_ENV=test`, validates ZIP structure, project,
-format, version compatibility, Fernet key and SQLite integrity, and creates a
-rollback snapshot under `server/data/test/restore_backups/` before replacing
-anything. A TEST snapshot cannot be restored into PROD.
+Restore validates ZIP structure, database checksums and SQLite integrity,
+project, format, version and exact TEST/PROD environment. It creates a rollback
+State Bundle under `restore_backups/` before replacing anything. Source
+credentials are decrypted and re-encrypted with the target server's existing
+Fernet key; `.env`, DOMAIN, RAM Role, bucket/endpoint configuration and
+`ADMIN_TOKEN` are never replaced. A bundle with local-only Lighting references
+is rejected when the target uses OSS, and a different canonical bucket is also
+rejected until the objects have been copied deliberately.
 
 Windows can use the same Python command directly (with `LEHUE_ENV=test`):
 
 ```powershell
 Push-Location server
 .venv\Scripts\python.exe scripts\test_snapshot.py export data\snapshots\windows-test.zip
-.venv\Scripts\python.exe scripts\test_snapshot.py restore data\snapshots\ecs-test.zip --env-file ..\.env
+.venv\Scripts\python.exe scripts\test_snapshot.py restore data\snapshots\ecs-test.zip
 Pop-Location
 ```
 
-The Windows restore command updates the internal encryption key atomically;
-restart TEST afterward.
+The target's internal encryption key remains unchanged; restart TEST afterward.

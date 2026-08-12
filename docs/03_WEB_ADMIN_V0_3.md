@@ -35,15 +35,13 @@ PI 在“系统”页可以：
 
 RA 可以使用日常实验运营页面，但不能管理账号或下载包含身份/GPS的系统备份。系统禁止当前 PI 自己禁用自己，也禁止禁用最后一个有效 PI。
 
-## 4. 系统状态备份
+## 4. State Bundle
 
-“系统 → 下载系统状态备份”使用 SQLite online backup API，在服务器继续运行时生成一致性快照。ZIP 包含：
+“系统 → State Bundle”与定时 OSS 备份、TEST 跨机迁移使用同一个格式。下载包包含两份 SQLite、GPS raw JSONL、manifest 和 credential 元数据；Lighting raw 不复制，只保存私有 OSS bucket/object key/SHA256/size 引用。
 
-- `lehue.sqlite3`：被试运行、设备、异常、GPS credential hash、GPS/raw events、审计日志等；
-- `lehue_identity.sqlite3`：PI/RA 账号、候选人身份/联系方式、联系日志等；
-- `manifest.json`：版本、生成时间、记录计数与 SHA256。
+PI 可上传 State Bundle 整包替换当前状态。系统先校验 ZIP、SQLite、版本与 TEST/PROD 环境并生成 rollback，再用目标服务器现有 Fernet key 重新加密 GPS/Portal credential。服务器 `.env`、DOMAIN、RAM Role、OSS endpoint 和 `ADMIN_TOKEN` 不被覆盖。包内若有仅 local 可用的 Lighting raw 引用，则不能 apply 到 OSS 环境。
 
-备份会清除 `web_sessions`，因此恢复后所有人需要重新登录；账号及原密码仍有效。`server/data/raw/gps` 的 JSONL 镜像不在这个 ZIP 中，后续单独做定时/OSS 备份。
+State Bundle 会清除 `web_sessions`，因此恢复后所有人需要重新登录；账号及原密码仍有效。State Bundle 含敏感身份、定位和 credential 信息，必须按密钥材料保管。
 
 ## 5. 当前页面
 

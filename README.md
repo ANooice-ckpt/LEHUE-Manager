@@ -2,7 +2,7 @@
 
 **LEHUE = Light Exposure Histories in Urban Environments**
 
-ECS 首次部署、doctor、真实 smoke test 和可移植 TEST snapshot 见
+ECS 首次部署、doctor、真实 smoke test 和可移植 State Bundle 见
 [`docs/07_ECS_DEPLOYMENT_CLOSEOUT.md`](docs/07_ECS_DEPLOYMENT_CLOSEOUT.md)。
 
 LEHUE-Manager 是实验运营与采集状态基础设施。**科研分析不搬云端。** 当前实现三条主线：
@@ -143,7 +143,7 @@ Admin 点击“开始实验”后会直接显示 Onboarding Card，并即时生�
 
 ## 定时异地备份
 
-`server/scripts/backup_to_oss.py` 使用 SQLite 在线备份 API生成两个数据库的一致副本，并将 GPS raw JSONL 一起压缩后上传到独立私有 OSS bucket。Lighting canonical raw 已在 OSS，不重复复制。对象键自动包含 `test` 或 `prod`，两套运行环境仍应使用不同 bucket 或至少不同 RAM 权限。
+`server/scripts/backup_to_oss.py` 生成与 Admin 下载、TEST 跨机迁移相同的 State Bundle：两个 SQLite 一致副本、GPS raw、manifest 和 credential 元数据。Lighting canonical raw 已在 OSS，只记录 bucket/object key/SHA256/size 引用，不重复复制。对象键自动包含 `test` 或 `prod`，两套运行环境仍应使用不同 bucket 或至少不同 RAM 权限。
 
 配置 `BACKUP_OSS_BUCKET`、`BACKUP_OSS_PREFIX` 后，备份脚本使用同一个 RAM Role credential provider，可先手工验证：
 

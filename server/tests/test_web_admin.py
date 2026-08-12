@@ -4,6 +4,7 @@ import base64
 import shutil
 import tempfile
 import zipfile
+from pathlib import Path
 
 
 def _reload_stack(monkeypatch, td: str, domain: str = "localhost"):
@@ -17,6 +18,7 @@ def _reload_stack(monkeypatch, td: str, domain: str = "localhost"):
     import app.core.identity_db as idb; importlib.reload(idb)
     import app.core.security as sec; importlib.reload(sec)
     import app.core.web_security as ws; importlib.reload(ws)
+    import app.core.state_bundle as state_bundle; importlib.reload(state_bundle)
     import app.modules.light.service as light; importlib.reload(light)
     import app.modules.questionnaire.s0_import as s0; importlib.reload(s0)
     import app.modules.gps.service as gps; importlib.reload(gps)
@@ -171,14 +173,15 @@ def test_web_admin_flow(monkeypatch):
             gps_headers = {'Authorization': 'Basic ' + base64.b64encode(f'001:{rotated_gps}'.encode()).decode()}
             assert client.post('/api/v1/gps/owntracks', json={'_type':'location','_id':'after-complete','tst':1786276022,'lat':1,'lon':1}, headers=gps_headers).status_code == 403
 
+            raw_path = config.settings.raw_archive_dir / '2026-08-11.jsonl'
+            raw_path.parent.mkdir(parents=True, exist_ok=True)
+            raw_path.write_text('{"_type":"location"}\n', encoding='utf-8')
             backup = client.get('/api/v1/web/backup')
             assert backup.status_code == 200
             with zipfile.ZipFile(io.BytesIO(backup.content)) as zf:
                 assert {'lehue.sqlite3', 'lehue_identity.sqlite3', 'manifest.json'} <= set(zf.namelist())
+                assert 'gps_raw/2026-08-11.jsonl' in zf.namelist()
 
-            raw_path = config.settings.raw_archive_dir / '2026-08-11.jsonl'
-            raw_path.parent.mkdir(parents=True, exist_ok=True)
-            raw_path.write_text('{"_type":"location"}\n', encoding='utf-8')
             import app.modules.admin.backup as backup_service
             importlib.reload(backup_service)
             archive_text, temp_dir_text = backup_service.create_system_backup(include_gps_raw=True)
@@ -188,12 +191,28 @@ def test_web_admin_flow(monkeypatch):
             finally:
                 shutil.rmtree(temp_dir_text)
 
+            with idb.identity_db() as conn:
+                conn.execute("UPDATE candidates SET name='changed-after-bundle' WHERE candidate_uid=?", (cuid,))
+            restored = client.post(
+                '/api/v1/web/state-bundle/restore', content=backup.content,
+                headers={**h, 'Content-Type': 'application/zip'},
+            )
+            assert restored.status_code == 200
+            assert restored.json()['credentials_reencrypted'] is True
+            assert Path(restored.json()['rollback_state_bundle']).exists()
+            with idb.identity_db() as conn:
+                assert conn.execute("SELECT name FROM candidates WHERE candidate_uid=?", (cuid,)).fetchone()['name'] == 'Edited'
+
             client.post('/api/v1/web/logout', json={}, headers=h)
             r = client.post('/api/v1/web/login', json={'username':'ra01','password':ra_password})
             assert r.status_code == 200
             ra_csrf = r.json()['csrf_token']; rh = {'X-CSRF-Token': ra_csrf}
             assert client.get('/api/v1/web/users').status_code == 403
             assert client.get('/api/v1/web/backup').status_code == 403
+            assert client.post(
+                '/api/v1/web/state-bundle/restore', content=backup.content,
+                headers={**rh, 'Content-Type': 'application/zip'},
+            ).status_code == 403
             assert client.post('/api/v1/web/users', json={'username':'x','role':'ra'}, headers=rh).status_code == 403
 
 
