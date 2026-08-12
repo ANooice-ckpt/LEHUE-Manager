@@ -10,7 +10,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core.db import db, init_db
 from app.core.identity_db import identity_db, init_identity_db
-from app.modules.light.service import ALLOWED_EXTENSIONS, infer_date, infer_subject_id, store_upload
 
 
 def now_iso():
@@ -26,11 +25,10 @@ def sid(v):
 def main():
     ap=argparse.ArgumentParser(description="Import the operational portion of ANOLighting V5 state.json")
     ap.add_argument("state_json")
-    ap.add_argument("--light-dir", help="Optional V5 Lighting raw-data directory to copy and parse")
     args=ap.parse_args()
     state=json.loads(Path(args.state_json).read_text(encoding="utf-8"))
     init_db(); init_identity_db(); now=now_iso()
-    counts={"candidates":0,"subjects":0,"devices":0,"incidents":0,"lighting":0,"lighting_skipped":0}
+    counts={"candidates":0,"subjects":0,"devices":0,"incidents":0}
 
     candidate_raw = state.get("forms", {}).get("candidate_raw", []) or []
 
@@ -70,21 +68,6 @@ def main():
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(incident_uid) DO UPDATE SET participant_id=excluded.participant_id,date_local=excluded.date_local,source=excluded.source,incident_type=excluded.incident_type,severity=excluded.severity,status=excluded.status,assigned_ra=excluded.assigned_ra,summary=excluded.summary,notes=excluded.notes,updated_at_utc=excluded.updated_at_utc""",
             (uid,sid(i.get("subject_id")),i.get("date",''),'legacy',i.get("issue_type",''),i.get("severity",'normal'),status,i.get("assigned_ra",''),i.get("message") or i.get("item_label",''),i.get("notes",''),now,now))
             counts["incidents"]+=1
-    if args.light_dir:
-        known_subjects = {sid(subject.get("subject_id")) for subject in state.get("subjects", [])}
-        light_root = Path(args.light_dir)
-        if not light_root.is_dir():
-            raise SystemExit(f"Lighting directory not found: {light_root}")
-        for path in sorted(light_root.rglob("*")):
-            if not path.is_file() or path.suffix.lower() not in ALLOWED_EXTENSIONS:
-                continue
-            participant_id = infer_subject_id(path.name)
-            date_local = infer_date(path.name)
-            if not participant_id or not date_local or participant_id not in known_subjects:
-                counts["lighting_skipped"] += 1
-                continue
-            store_upload(participant_id,date_local,path.name,path.read_bytes(),"legacy_migration")
-            counts["lighting"] += 1
     print(json.dumps(counts,ensure_ascii=False,indent=2))
     print("Not migrated by design: old daily-questionnaire CSV cache, old GPS manifests/parser state, derived daily QC rows, scan_index.")
 

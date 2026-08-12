@@ -21,17 +21,10 @@ from app.modules.light.storage import get_light_storage
 
 EXPECTED_SAMPLES = 7200
 VALID_THRESHOLD_PCT = 90.0
-PARSER_VERSION = "light-v1"
+PARSER_VERSION = "light-v2"
 ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".txt"}
-
-DATE_PATTERNS = (
-    re.compile(r"(?P<date>20\d{2}[-_./]?\d{1,2}[-_./]?\d{1,2})"),
-    re.compile(r"(?P<date>\d{4}[-_./]\d{1,2}[-_./]\d{1,2})"),
-)
-SUBJECT_PATTERNS = (
-    re.compile(r"(?:^|[^0-9])(?P<sid>\d{3})(?:[^0-9]|$)"),
-    re.compile(r"(?P<sid>P\d{3})", re.I),
-)
+CONTENT_DATE_WARNING = "文件已收到，但记录时间似乎与本实验日不符，请确认是否选错文件并重新上传"
+TIME_LABELS = ("modify time", "modified time", "record time", "recorded time", "date time", "datetime", "timestamp", "time")
 
 
 def now_iso() -> str:
@@ -47,21 +40,6 @@ def normalize_date(value: str) -> str:
         return date(int(match.group(1)), int(match.group(2)), int(match.group(3))).isoformat()
     except ValueError:
         return ""
-
-
-def infer_subject_id(filename: str) -> str:
-    for pattern in SUBJECT_PATTERNS:
-        if match := pattern.search(filename or ""):
-            sid = match.group("sid").upper().removeprefix("P")
-            return sid.zfill(3) if sid.isdigit() else sid
-    return ""
-
-
-def infer_date(filename: str) -> str:
-    for pattern in DATE_PATTERNS:
-        if match := pattern.search(filename or ""):
-            return normalize_date(match.group("date"))
-    return ""
 
 
 def _to_float(value):
@@ -198,6 +176,7 @@ def _extract_table_records(rows: list[list[str]]) -> list[dict]:
         photo_index = labels.index("photopic lux")
         melanopic_index = labels.index("melanopic")
         saturated_index = labels.index("is saturate") if "is saturate" in labels else -1
+        time_index = next((labels.index(label) for label in TIME_LABELS if label in labels), -1)
         records: list[dict] = []
         for values in rows[index + 1:]:
             if not any(str(value).strip() for value in values):
@@ -208,6 +187,8 @@ def _extract_table_records(rows: list[list[str]]) -> list[dict]:
             }
             if saturated_index >= 0:
                 record["saturate"] = values[saturated_index] if saturated_index < len(values) else ""
+            if time_index >= 0:
+                record["modify_time"] = values[time_index] if time_index < len(values) else ""
             records.append(record)
         return records
     return []
@@ -219,12 +200,40 @@ def _stats(values: list[float]) -> tuple[float | None, float | None, float | Non
     return round(sum(values) / len(values), 3), round(float(statistics.median(values)), 3), round(max(values), 3)
 
 
-def parse_light_path(filename: str, path: Path) -> dict:
+def _record_date(value: str) -> date | None:
+    text = str(value or "").strip()
+    match = re.search(r"(?<!\d)(20\d{2})[-/.:](\d{1,2})[-/.:](\d{1,2})(?!\d)", text)
+    if not match:
+        match = re.search(r"(?<!\d)(20\d{2})(\d{2})(\d{2})(?!\d)", text)
+    if not match:
+        return None
+    try:
+        return date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+    except ValueError:
+        return None
+
+
+def _content_date_warning(records: list[dict], date_local: str) -> str:
+    if not date_local:
+        return ""
+    raw_times = [str(record.get("modify_time") or "").strip() for record in records]
+    if not records or any(not value for value in raw_times):
+        return ""
+    parsed_dates = [_record_date(value) for value in raw_times]
+    if any(value is None for value in parsed_dates):
+        return ""
+    experiment_day = date.fromisoformat(date_local)
+    allowed_dates = {experiment_day, experiment_day + timedelta(days=1)}
+    return CONTENT_DATE_WARNING if all(value not in allowed_dates for value in parsed_dates) else ""
+
+
+def parse_light_path(filename: str, path: Path, date_local: str = "") -> dict:
     suffix = Path(filename or "").suffix.lower()
     if suffix not in ALLOWED_EXTENSIONS:
         raise ValueError("Lighting 只支持 .csv、.xlsx 或 .txt")
     rows = _rows_from_xlsx(path) if suffix == ".xlsx" else _rows_from_text(path)
     records = _extract_repeated_records(rows) or _extract_table_records(rows)
+    date_warning = _content_date_warning(records, date_local)
     total = len(records)
     photopic_values: list[float] = []
     melanopic_values: list[float] = []
@@ -255,18 +264,18 @@ def parse_light_path(filename: str, path: Path) -> dict:
         "melanopic_mean": melanopic_mean,
         "melanopic_median": melanopic_median,
         "melanopic_max": melanopic_max,
-        "parse_error": "" if total else "未识别到 Photopic Lux / Melanopic 光谱记录",
+        "parse_error": date_warning if total else "未识别到 Photopic Lux / Melanopic 光谱记录",
     }
 
 
-def parse_light_bytes(filename: str, raw: bytes) -> dict:
+def parse_light_bytes(filename: str, raw: bytes, date_local: str = "") -> dict:
     """Backward-compatible helper; normal ingestion parses from a temporary path."""
     suffix = Path(filename or "").suffix.lower()
     fd, name = tempfile.mkstemp(prefix="lehue-light-parse-", suffix=suffix)
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(raw)
-        return parse_light_path(filename, Path(name))
+        return parse_light_path(filename, Path(name), date_local)
     finally:
         Path(name).unlink(missing_ok=True)
 
@@ -314,9 +323,9 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _parse_qc(filename: str, path: Path) -> dict:
+def _parse_qc(filename: str, path: Path, date_local: str) -> dict:
     try:
-        return parse_light_path(filename, path)
+        return parse_light_path(filename, path, date_local)
     except Exception as exc:
         return {
             "records_expected": EXPECTED_SAMPLES, "records_total": 0, "records_valid": 0,
@@ -340,12 +349,6 @@ def _validate_upload(participant_id: str, date_local: str, filename: str, size_b
         raise ValueError("Lighting 文件为空")
     if size_bytes > settings.light_upload_max_bytes:
         raise ValueError(f"Lighting 文件超过上传上限 {settings.light_upload_max_bytes // 1024 // 1024} MB")
-    inferred_sid = infer_subject_id(filename)
-    inferred_date = infer_date(filename)
-    if inferred_sid and inferred_sid != participant_id:
-        raise ValueError("文件名中的被试 ID 与当前专属入口不一致，请检查是否选错文件")
-    if inferred_date and inferred_date != date_local:
-        raise ValueError("文件名中的日期与所选暴露日期不一致")
     with db() as conn:
         if not conn.execute("SELECT 1 FROM study_subjects WHERE participant_id=?", (participant_id,)).fetchone():
             raise ValueError("participant not found")
@@ -376,7 +379,7 @@ def store_upload_path(participant_id: str, date_local: str, filename: str, sourc
         raise RuntimeError("Lighting stored object size does not match upload")
 
     try:
-        summary = _parse_qc(filename, source_path)
+        summary = _parse_qc(filename, source_path, date_local)
         with db() as conn:
             conn.execute(
                 """INSERT INTO lighting_files(
@@ -489,7 +492,7 @@ def rerun_qc(upload_uid: str) -> dict:
     try:
         if qc_path.stat().st_size != row["file_size_bytes"] or _sha256_file(qc_path) != row["sha256"]:
             raise ValueError("Lighting canonical raw size or SHA256 does not match its registration")
-        summary = _parse_qc(row["original_filename"], qc_path)
+        summary = _parse_qc(row["original_filename"], qc_path, row["date_local"])
     finally:
         qc_path.unlink(missing_ok=True)
     with db() as conn:
@@ -656,6 +659,8 @@ def daily_qc_rows() -> list[dict]:
                         issues.append({"type": "insufficient_light", "label": f"Lighting样本不足（{light['valid_pct']:.1f}%）"})
                     elif light["quality"] != "valid":
                         issues.append({"type": "unreadable_light", "label": "Lighting无法解析"})
+                    if light and light["parse_error"] == CONTENT_DATE_WARNING:
+                        issues.append({"type": "wrong_day_light", "label": CONTENT_DATE_WARNING})
                     if gps_summary["point_count"] == 0:
                         issues.append({"type": "missing_gps", "label": "GPS"})
                     elif not gps:

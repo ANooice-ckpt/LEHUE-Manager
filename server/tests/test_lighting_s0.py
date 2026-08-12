@@ -37,6 +37,38 @@ def _valid_light_csv() -> bytes:
     return ("\n".join(rows) + "\n").encode()
 
 
+def _timed_light_csv(day: str, count: int = 2) -> bytes:
+    rows = ["Modify Time,Photopic Lux,Melanopic,Is Saturate"]
+    rows.extend(f"{day} 23:59:{i:02d},100,80,No" for i in range(count))
+    return ("\n".join(rows) + "\n").encode()
+
+
+def test_content_date_qc_warns_only_for_clear_wrong_day(monkeypatch):
+    with tempfile.TemporaryDirectory() as td:
+        _, _, light, _, _, _ = _reload(monkeypatch, td)
+        warning = light.CONTENT_DATE_WARNING
+
+        wrong = light.parse_light_bytes("anything.csv", _timed_light_csv("2026-08-01"), "2026-08-10")
+        assert wrong["parse_error"] == warning
+        assert wrong["quality"] == "insufficient"
+
+        cross_midnight = (
+            "Modify Time,Photopic Lux,Melanopic,Is Saturate\n"
+            "2026-08-10 23:59:59,100,80,No\n"
+            "2026-08-11 00:01:00,100,80,No\n"
+        ).encode()
+        assert light.parse_light_bytes("anything.csv", cross_midnight, "2026-08-10")["parse_error"] == ""
+
+        exif_time = _timed_light_csv("2026:08:01")
+        assert light.parse_light_bytes("anything.csv", exif_time, "2026-08-10")["parse_error"] == warning
+
+        uncertain = _timed_light_csv("2026-08-01") + b"not-a-time,100,80,No\n"
+        assert light.parse_light_bytes("anything.csv", uncertain, "2026-08-10")["parse_error"] == ""
+
+        missing_time = _timed_light_csv("2026-08-01") + b",100,80,No\n"
+        assert light.parse_light_bytes("anything.csv", missing_time, "2026-08-10")["parse_error"] == ""
+
+
 def test_lighting_upload_and_daily_qc(monkeypatch):
     with tempfile.TemporaryDirectory() as td:
         dbmod, _, light, _, portal, main = _reload(monkeypatch, td)
@@ -104,9 +136,16 @@ def test_lighting_upload_and_daily_qc(monkeypatch):
             assert client.post(url, content=raw).json()["duplicate"] is True
             mismatch = client.post(
                 f"/api/v1/portal/{token}/lighting?date_local={today.isoformat()}&filename=002_{today.strftime('%Y%m%d')}_LIGHT.csv",
-                content=raw,
+                content=raw + b"\n",
             )
-            assert mismatch.status_code == 400
+            assert mismatch.status_code == 200
+            assert mismatch.json()["original_filename"].startswith("002_")
+            unreadable = client.post(
+                f"/api/v1/portal/{token}/lighting?date_local={today.isoformat()}&filename=arbitrary-name.txt",
+                content=b"raw was received even though this is not parseable lighting data",
+            )
+            assert unreadable.status_code == 200
+            assert unreadable.json()["quality"] == "unreadable"
             assert client.get(f"/api/v1/portal/{token}").json()["lighting"]["status"] == "done"
 
         with dbmod.db() as conn:
@@ -132,6 +171,21 @@ def test_lighting_upload_and_daily_qc(monkeypatch):
                 "SELECT status FROM incidents WHERE incident_uid=?",
                 (f"acq_001_{yesterday.isoformat()}_missing_morning",),
             ).fetchone()["status"] == "closed"
+
+        wrong_day = light.store_upload(
+            "001", yesterday.isoformat(), "untrusted-provenance-name.csv",
+            _timed_light_csv((yesterday - timedelta(days=8)).isoformat(), 6480), "test",
+        )
+        assert wrong_day["parse_error"] == light.CONTENT_DATE_WARNING
+        wrong_day_qc = light.run_daily_qc("tester")
+        wrong_day_row = next(row for row in wrong_day_qc["rows"] if row["date_local"] == yesterday.isoformat())
+        assert any(issue["type"] == "wrong_day_light" for issue in wrong_day_row["issues"])
+        with dbmod.db() as conn:
+            incident = conn.execute(
+                "SELECT status FROM incidents WHERE incident_uid=?",
+                (f"acq_001_{yesterday.isoformat()}_wrong_day_light",),
+            ).fetchone()
+            assert incident["status"] == "open"
 
 
 def test_oss_direct_upload_can_resume_and_finish_qc(monkeypatch):

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Remove Lighting filename identity/date gates; Portal assignment is canonical
+  and filenames are provenance only. Raw uploads now remain accepted when QC
+  finds unreadable, insufficient, or clearly wrong-day content.
+- Reuse parsed Lighting record timestamps to warn participants and the existing
+  daily QC/incident flow only when an entire reliably dated file is clearly
+  unrelated to the assigned experiment day, while allowing midnight crossover.
 - Build and health-probe the current candidate API image before replacing a
   running ECS container; validate the configured Fernet key with Fernet itself.
 - Preserve existing PI accounts during upgrades and refuse to replace an

@@ -28,10 +28,11 @@
 ## 3. Lighting 规则
 
 - 文件类型：CSV、XLSX、TXT。
-- 文件名中如含三位 participant ID 或日期，必须与 token/所选日期一致；可在上传时阻止选错文件。
+- participant 与实验日只由 Portal 入口和所选任务确定；原文件名仅保存为 provenance，不参与身份、日期或上传判断。
 - 同时支持旧设备的重复键值布局与标准表格布局。
 - 每日期望 7,200 条；Photopic Lux、Melanopic 均为有限数值且未饱和才计为有效。
 - 有效率按 `valid / 7200 × 100` 保留 1 位小数；达到 90.0% 为 `valid`，否则为 `insufficient`；无法识别记录为 `unreadable`。
+- 数据质量不阻止 raw 保存。若内容中的 `Modify Time`/已有时间字段均可可靠解析，且整份文件明显不属于实验日或其跨午夜次日，上传仍成功，并通过同一 QC/incident 结果提醒被试与 PI/RA。
 - 同一被试同一天可重新上传；QC 依次选择 valid、insufficient、unreadable，并在同质量下选择有效率更高、上传更新的文件。
 - raw 文件不进入系统状态 ZIP；SQLite 中的文件元数据、QC 摘要会进入 ZIP。生产部署必须另外备份 persistent volume，未来可直接迁移至 OSS。
 
@@ -65,13 +66,7 @@ cd server
 .\.venv\Scripts\python.exe scripts\migrate_v5_state.py "D:\path\to\old\data\state.json"
 ```
 
-同时复制并解析旧 Lighting 原始目录：
-
-```powershell
-.\.venv\Scripts\python.exe scripts\migrate_v5_state.py "D:\path\to\old\data\state.json" --light-dir "D:\path\to\light_files"
-```
-
-脚本可重复运行：候选、被试、设备包、异常按稳定 ID upsert；Lighting 相同 participant/date/SHA-256 不重复。
+脚本可重复运行：候选、被试、设备包、异常按稳定 ID upsert。旧 Lighting 目录不再通过文件名推断 participant/date；请从对应 Portal/Admin 实验日上传，使业务上下文成为唯一 canonical 来源。
 
 ## 7. 历史兼容性检查
 
