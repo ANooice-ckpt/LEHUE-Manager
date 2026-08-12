@@ -579,12 +579,6 @@ def list_uploads(participant_id: str = "", date_local: str = "") -> list[dict]:
         return [_public_upload(row) for row in rows]
 
 
-def source_stats() -> dict:
-    with db() as conn:
-        row = conn.execute("SELECT COUNT(*) records,MAX(uploaded_at_utc) last_event,COUNT(DISTINCT participant_id) participants FROM lighting_files").fetchone()
-    return dict(row)
-
-
 def _date_range(start: date, end: date):
     current = start
     while current <= end:

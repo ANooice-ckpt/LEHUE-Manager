@@ -481,22 +481,6 @@ def update_incident_status(uid: str, status: str, operator: str):
     audit(operator, "incident.status", "incident", uid, {"status":status})
 
 
-def data_sources() -> list[dict[str, Any]]:
-    with db() as conn:
-        gps_count = conn.execute("SELECT COUNT(*) n FROM gps_locations").fetchone()["n"]
-        gps_last = conn.execute("SELECT MAX(received_at_utc) x FROM gps_locations").fetchone()["x"]
-        q_count = conn.execute("SELECT COUNT(*) n FROM questionnaire_responses").fetchone()["n"]
-        q_last = conn.execute("SELECT MAX(submitted_at_utc) x FROM questionnaire_responses").fetchone()["x"]
-    light = light_service.source_stats()
-    return [
-        {"key":"gps","name":"GPS","status":"connected","acquisition":"OwnTracks HTTP/HTTPS realtime","storage":"lehue.sqlite3 + raw JSONL","automation":"Realtime ingest + acquisition QC","last_event":gps_last,"records":gps_count},
-        {"key":"questionnaire","name":"Questionnaire","status":"connected","acquisition":"LEHUE participant portal /p/<token>","storage":"lehue.sqlite3 / questionnaire_responses","automation":"Identity + Study Day + submission status are automatic","last_event":q_last,"records":q_count},
-        {"key":"light","name":"Lighting","status":"connected","acquisition":"Participant portal or RA backfill upload","storage":f"{settings.light_storage_backend}: raw/lighting objects + lehue.sqlite3 metadata","automation":"V5-compatible parser + 7200/90% acquisition QC","last_event":light["last_event"],"records":light["records"]},
-        {"key":"ax3","name":"AX3","status":"offline","acquisition":"Device return → batch download","storage":"Local/raw archive; cloud status only","automation":"Post-return ingest reserved","last_event":None,"records":None},
-        {"key":"identity","name":"Identity & contact","status":"connected","acquisition":"PI/RA Web Admin","storage":"lehue_identity.sqlite3","automation":"Separated from GPS/research records","last_event":None,"records":None},
-    ]
-
-
 def list_lighting_uploads(participant_id: str = "", date_local: str = ""):
     return light_service.list_uploads(participant_id, date_local)
 

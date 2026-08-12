@@ -284,13 +284,13 @@ async def subject_update(participant_id: str, request: Request, operator=Depends
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-
 @router.post("/api/v1/web/subjects/{participant_id}/gps-credential")
 def gps_credential(participant_id: str, operator=Depends(require_operator_write)):
     try:
         return {"participant_id":participant_id,"password":service.create_or_rotate_gps_credential(participant_id, operator.username)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
     except (sqlite3.Error, RuntimeError) as exc:
         raise HTTPException(status_code=503, detail=f"GPS credential generation failed: {exc}")
 
@@ -407,8 +407,4 @@ async def incident_status(incident_uid: str, request: Request, operator=Depends(
         return {"ok":True}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-
-
-@router.get("/api/v1/web/data-sources")
-def data_sources(operator=Depends(require_operator)):
-    return service.data_sources()
+# End of operational Admin routes.

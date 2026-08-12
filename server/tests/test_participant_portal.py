@@ -176,8 +176,4 @@ def test_participant_portal_questionnaire_flow(monkeypatch):
             assert subjects[0]["portal_enabled"] is True
             assert subjects[0]["questionnaire_today_completed"] == 1
 
-            source = {x["key"]: x for x in svc.data_sources()}
-            assert source["questionnaire"]["status"] == "connected"
-            assert source["questionnaire"]["records"] == 2
-
             assert client.get("/api/v1/portal/bad-token").status_code == 404

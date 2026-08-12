@@ -49,7 +49,7 @@ LEHUE-Manager/
 - Participant Portal 参考原 ANOLighting 的移动端单卡片/任务列表结构，接入正式晨间/睡前问卷、Lighting 上传和 GPS 回传状态。
 - 问卷不再依赖问卷星/每日 CSV 下载；答案直接写入 `lehue.sqlite3` 的 `questionnaire_responses`。
 - 两份正式问卷由独立 `questionnaire/forms.py` 模块提供，均在一个移动端页面内完成，不建设复杂问卷设计器。
-- Admin 的被试表与 Dashboard 可看到当前两个任务问卷的完成数；数据源页将 Questionnaire 标记为 LEHUE native connected。
+- Admin 的被试表与 Dashboard 可看到当前两个任务问卷的完成数。
 - 问卷、Lighting、GPS 和 Daily QC 统一以实验日 `d` 归属：睡前问卷与次日起床后填写的晨间问卷都保存为 `date_local=d`，真实提交时间继续保存在 `submitted_at_utc`；`calendar_date_local` 仅记录实际提交日历日。
 - Portal 只显示当前目标实验日，并在上一实验日确有缺失时增加明确的补填/补传入口，不提供任意历史日期输入。`QUESTIONNAIRE_EVENING_CUTOFF_HOUR` 只决定睡前问卷和 Lighting 当前默认目标日，不重新解释已经明确选择的实验日。
 - Daily QC 对同一个实验日直接核对 `evening[d] + morning[d] + lighting[d] + gps[d]`；前一实验日到 `QC_DAY_CLOSE_HOUR` 后才产生缺失提醒，补齐后下一次 QC 自动恢复。

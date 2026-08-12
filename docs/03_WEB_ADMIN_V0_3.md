@@ -50,8 +50,6 @@ State Bundle 会清除 `web_sessions`，因此恢复后所有人需要重新登�
 - 候选池：保留旧 V5 的候选→正式 ID/预约逻辑。
 - 设备包：以 pack 为最小周转单元，预留 Lighting / AX3 serial。
 - 异常：执行期异常中心。
-- 数据源：GPS / Lighting / Questionnaire / AX3 / Identity 的接入与存储状态。
-- 系统架构：显示云端运营、各数据源、数据库、OSS 与本地科研工作站边界。
 - 系统（PI）：账号管理与系统状态备份。
 
 ## 6. 从旧 V5 state.json 迁移

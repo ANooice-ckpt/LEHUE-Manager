@@ -151,7 +151,7 @@ def test_web_admin_flow(monkeypatch):
             assert client.post(f'/api/v1/web/incidents/{incident_uid}/status', json={'status':'open'}, headers=h).status_code == 200
             d = client.get('/api/v1/web/dashboard').json()
             assert d['metrics']['running'] == 1 and d['metrics']['open_incidents'] == 1
-            assert client.get('/api/v1/web/data-sources').status_code == 200
+            assert client.get('/api/v1/web/data-sources').status_code == 404
             assert client.get('/admin').status_code == 200
             assert client.get('/admin/vendor/leaflet.css').status_code == 200
             assert client.get('/admin/vendor/leaflet.js').status_code == 200
