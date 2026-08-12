@@ -9,6 +9,6 @@ SQLite databases are absent or still contain no records. Later TEST writes stay 
 
 PROD uses only `data/prod` and never installs this baseline.
 
-The current baseline contains one test administrator, 15 synthetic S0
-candidates, one running synthetic participant and one device pack. Web sessions
-are cleared before the snapshot is committed.
+The current baseline contains no administrator, 15 synthetic S0 candidates,
+one running synthetic participant and one device pack. Each fresh TEST instance
+creates its own PI account; web sessions are always empty in the baseline.

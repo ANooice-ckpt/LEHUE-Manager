@@ -1,6 +1,9 @@
-# LEHUE-Manager v0.5.4
+# LEHUE-Manager v0.5.5
 
 **LEHUE = Light Exposure Histories in Urban Environments**
+
+ECS 首次部署、doctor、真实 smoke test 和可移植 TEST snapshot 见
+[`docs/07_ECS_DEPLOYMENT_CLOSEOUT.md`](docs/07_ECS_DEPLOYMENT_CLOSEOUT.md)。
 
 LEHUE-Manager 是实验运营与采集状态基础设施。**科研分析不搬云端。** 当前实现三条主线：
 

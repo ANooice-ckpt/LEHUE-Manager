@@ -44,10 +44,10 @@ def user_count() -> int:
 
 def setup_status(local_request: bool = False) -> dict:
     initialized = user_count() > 0
-    local_mode = local_request
     return {
         "initialized": initialized,
-        "setup_token_required": (not initialized) and (not local_mode),
+        "setup_token_required": False,
+        "setup_cli_required": (not initialized) and (not local_request),
     }
 
 
@@ -68,19 +68,14 @@ def create_admin_user(username: str, password: str, role: str = "ra", display_na
 def bootstrap_first_pi(username: str, password: str, display_name: str = "", setup_token: str = "", local_request: bool = False):
     """Create the first PI account exactly once.
 
-    Local development does not require a setup token. Public deployments require
-    the existing ADMIN_TOKEN from .env as a one-time bootstrap secret. Once any
-    admin user exists this function is permanently closed.
+    Local development may initialize from the loopback UI. Public deployments
+    must create the first PI through server_setup.sh, before the site is exposed.
+    Once any admin user exists this function is permanently closed.
     """
     username = _normalized_username(username)
     _validate_password(password)
-    local_mode = local_request
-    if not local_mode:
-        expected = settings.admin_token
-        if not expected or expected == "CHANGE_ME_TO_A_LONG_RANDOM_ADMIN_TOKEN":
-            raise ValueError("Server setup token is not configured")
-        if not setup_token or not hmac.compare_digest(setup_token, expected):
-            raise PermissionError("Invalid setup token")
+    if not local_request:
+        raise PermissionError("Public first-time setup is disabled; run scripts/server_setup.sh on the server")
 
     salt, digest = hash_secret(password)
     now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")

@@ -32,7 +32,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 1. 创建/复用 `server\.venv`；
 2. 安装 `requirements-dev.txt`（其中包含运行依赖与 pytest/httpx）；
 3. 验证关键模块均可导入；
-4. 首次生成 `.env` 和随机 `ADMIN_TOKEN`；
+4. 首次生成 `.env` 和服务器内部密钥（无需人工管理 `ADMIN_TOKEN`）；
 5. 运行自动化测试。
 
 成功时应看到：

@@ -17,8 +17,11 @@ def main():
     parser.add_argument("--role", choices=["pi", "ra"], default="ra")
     parser.add_argument("--display-name", default="")
     parser.add_argument("--password", default="")
+    parser.add_argument("--password-stdin", action="store_true")
     args = parser.parse_args()
-    password = args.password or secrets.token_urlsafe(18)
+    if args.password and args.password_stdin:
+        raise SystemExit("Use only one password input method")
+    password = (sys.stdin.readline().rstrip("\r\n") if args.password_stdin else args.password) or secrets.token_urlsafe(18)
     init_identity_db()
     try:
         create_admin_user(args.username, password, args.role, args.display_name)

@@ -71,10 +71,13 @@ cd LEHUE-Manager
 
 如果仓库是 private repo，请使用 GitHub 推荐的 SSH key / token 方法，不要把 GitHub 密码写到命令中。
 
-## G. 配置生产 `.env`
+## G. 首次设置
+
+只输入 PI 用户名和密码；服务器内部密钥由脚本生成，不再人工管理
+`ADMIN_TOKEN`：
 
 ```bash
-cp .env.example .env
+bash scripts/server_setup.sh test
 nano .env
 ```
 
@@ -82,17 +85,11 @@ nano .env
 
 ```text
 DOMAIN=gps.example.com
-ADMIN_TOKEN=随机长token
-CREDENTIAL_ENCRYPTION_KEY=随机Fernet密钥
 ENABLE_DOCS=true
 ```
 
-生成 token：
-
-```bash
-python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
-python3 -c 'import secrets,base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())'
-```
+完整 doctor、真实 ECS smoke test 与 TEST snapshot 导入导出见
+`docs/07_ECS_DEPLOYMENT_CLOSEOUT.md`。
 
 ## H. 启动容器
 
@@ -143,12 +140,8 @@ docker compose exec api python scripts/create_participant.py TEST01
 curl https://gps.example.com/health
 ```
 
-管理员状态：
-
-```bash
-curl -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
-  https://gps.example.com/api/v1/admin/gps/status/TEST01
-```
+管理员状态请登录 `https://gps.example.com/admin` 查看。旧 Bearer 接口仅保留兼容，
+其内部 token 由设置脚本维护。
 
 ## L. 更新代码
 

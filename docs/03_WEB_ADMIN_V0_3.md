@@ -17,7 +17,9 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 ## 2. 服务器首次初始化
 
-公网第一次打开 `/admin` 时，除用户名/密码外还需要“服务器初始化密钥”，即服务器 `.env` 中的 `ADMIN_TOKEN`。首个 PI 创建后，初始化接口永久关闭；仅凭网址无法再创建账号。
+公网不开放浏览器首次注册。ECS 首次部署运行 `bash scripts/server_setup.sh test`
+并只输入 PI 用户名/密码；内部密钥自动生成。首个 PI 创建后仍由数据库事务保证
+只能初始化一次，仅凭网址无法创建账号。本地 loopback 开发仍可从页面创建首个 PI。
 
 `windows_create_admin.ps1` / `bootstrap_admin.py` 仍保留为故障恢复工具，但不再是正常注册流程。
 

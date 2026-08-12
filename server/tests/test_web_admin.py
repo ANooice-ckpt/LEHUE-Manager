@@ -8,6 +8,7 @@ import zipfile
 
 def _reload_stack(monkeypatch, td: str, domain: str = "localhost"):
     monkeypatch.setenv("DATA_DIR", td)
+    monkeypatch.setenv("DATA_ROOT", td)
     monkeypatch.setenv("ADMIN_TOKEN", "admin-token-for-test")
     monkeypatch.setenv("DOMAIN", domain)
 
@@ -37,7 +38,7 @@ def test_web_admin_flow(monkeypatch):
         with TestClient(main.app, base_url='http://127.0.0.1:8085') as client:
             setup = client.get('/api/v1/web/setup-status')
             assert setup.status_code == 200
-            assert setup.json() == {"initialized": False, "setup_token_required": False}
+            assert setup.json() == {"initialized": False, "setup_token_required": False, "setup_cli_required": False}
 
             r = client.post('/api/v1/web/setup', json={
                 'username': 'pi', 'display_name': 'PI', 'password': 'strong-password-01'
@@ -163,18 +164,29 @@ def test_web_admin_flow(monkeypatch):
             assert client.post('/api/v1/web/users', json={'username':'x','role':'ra'}, headers=rh).status_code == 403
 
 
-def test_public_first_setup_requires_server_token(monkeypatch):
+def test_public_first_setup_requires_server_cli(monkeypatch):
     with tempfile.TemporaryDirectory() as td:
         _, _, _, _, _, main = _reload_stack(monkeypatch, td, domain='gps.example.com')
         from fastapi.testclient import TestClient
         with TestClient(main.app, base_url='https://gps.example.com') as client:
             s = client.get('/api/v1/web/setup-status').json()
-            assert s == {"initialized": False, "setup_token_required": True}
+            assert s == {"initialized": False, "setup_token_required": False, "setup_cli_required": True}
             denied = client.post('/api/v1/web/setup', json={
                 'username':'pi', 'password':'strong-password-01', 'setup_token':'wrong'
             })
             assert denied.status_code == 403
-            ok = client.post('/api/v1/web/setup', json={
-                'username':'pi', 'password':'strong-password-01', 'setup_token':'admin-token-for-test'
-            })
-            assert ok.status_code == 200
+
+
+def test_credential_generation_runtime_failure_is_explicit(monkeypatch):
+    with tempfile.TemporaryDirectory() as td:
+        _, _, _, _, svc, main = _reload_stack(monkeypatch, td)
+        from fastapi.testclient import TestClient
+        with TestClient(main.app, base_url='http://127.0.0.1:8085') as client:
+            setup = client.post('/api/v1/web/setup', json={'username':'pi','password':'strong-password-01'}).json()
+            headers = {'X-CSRF-Token': setup['csrf_token']}
+            with main.db() as conn:
+                conn.execute("INSERT INTO study_subjects(participant_id,created_at_utc,updated_at_utc) VALUES('001','now','now')")
+            monkeypatch.setattr(svc, 'create_or_rotate_gps_credential', lambda *_: (_ for _ in ()).throw(RuntimeError('kms unavailable')))
+            response = client.post('/api/v1/web/subjects/001/gps-credential', json={}, headers=headers)
+            assert response.status_code == 503
+            assert response.json()['detail'] == 'GPS credential generation failed: kms unavailable'

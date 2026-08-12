@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import os
+import secrets
 from dataclasses import dataclass
 from pathlib import Path
+
+from cryptography.fernet import Fernet
 
 from app.version import APP_VERSION
 
@@ -96,7 +99,10 @@ class Settings:
     app_version: str = APP_VERSION
     runtime_env: str = _RUNTIME_ENV
     study_timezone: str = os.getenv("STUDY_TIMEZONE", "Asia/Shanghai")
-    admin_token: str = os.getenv("ADMIN_TOKEN", "CHANGE_ME_TO_A_LONG_RANDOM_ADMIN_TOKEN")
+    # Compatibility secret for the legacy /api/v1/admin endpoints. New
+    # deployments use Web Admin sessions; setup scripts persist this value so
+    # operators never have to create or manage it themselves.
+    admin_token: str = os.getenv("ADMIN_TOKEN", "").strip() or secrets.token_urlsafe(48)
     credential_encryption_key: str = os.getenv("CREDENTIAL_ENCRYPTION_KEY", "")
     data_dir: Path = _DATA_DIR
     db_path: Path = _DATA_DIR / "lehue.sqlite3"
@@ -136,6 +142,13 @@ class Settings:
     ).strip()
 
     def __post_init__(self) -> None:
+        key = self.credential_encryption_key.strip()
+        if not key or key.startswith("CHANGE_ME"):
+            raise RuntimeError("CREDENTIAL_ENCRYPTION_KEY is required; run the platform setup script")
+        try:
+            Fernet(key.encode("ascii"))
+        except (ValueError, UnicodeEncodeError) as exc:
+            raise RuntimeError("CREDENTIAL_ENCRYPTION_KEY must be a valid Fernet key") from exc
         if self.light_storage_backend != "oss":
             return
         if not self.oss_bucket or not (self.oss_region or self.oss_endpoint):

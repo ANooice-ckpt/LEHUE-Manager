@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import secrets
 import shutil
+import sqlite3
 from pathlib import Path
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
@@ -253,6 +254,8 @@ def gps_credential(participant_id: str, operator=Depends(require_operator_write)
         return {"participant_id":participant_id,"password":service.create_or_rotate_gps_credential(participant_id, operator.username)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except (sqlite3.Error, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail=f"GPS credential generation failed: {exc}")
 
 
 @router.post("/api/v1/web/subjects/{participant_id}/portal")
@@ -261,6 +264,8 @@ def participant_portal(participant_id: str, operator=Depends(require_operator_wr
         return {"participant_id": participant_id, "path": service.create_portal_link(participant_id, operator.username)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except (sqlite3.Error, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail=f"Participant portal generation failed: {exc}")
 
 
 @router.post("/api/v1/web/subjects/{participant_id}/start")

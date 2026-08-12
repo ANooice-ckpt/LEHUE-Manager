@@ -5,10 +5,20 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from cryptography.fernet import Fernet
 
 import app.core.config as config
 import app.core.db as dbmod
 import app.core.test_seed as test_seed
+
+
+def test_settings_require_valid_credential_key(monkeypatch):
+    with pytest.raises(RuntimeError, match="CREDENTIAL_ENCRYPTION_KEY"):
+        config.Settings(credential_encryption_key="")
+    with pytest.raises(RuntimeError, match="valid Fernet key"):
+        config.Settings(credential_encryption_key="not-a-fernet-key")
+    valid = Fernet.generate_key().decode()
+    assert config.Settings(credential_encryption_key=valid).credential_encryption_key == valid
 
 
 def _sqlite_file(path: Path, marker: str) -> None:

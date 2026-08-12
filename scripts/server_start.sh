@@ -25,6 +25,7 @@ case "$ENVIRONMENT" in
 esac
 
 export LEHUE_ENV="$ENVIRONMENT"
+bash ./scripts/server_doctor.sh "$ENVIRONMENT"
 echo "LEHUE ENV: ${LEHUE_ENV^^}"
 echo "Data dir : ./server/data/$LEHUE_ENV"
 echo "Environment is locked until the containers stop."

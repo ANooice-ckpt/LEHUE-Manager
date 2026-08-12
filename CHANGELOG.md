@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.5.5 - ECS deployment closeout
+
+- Fail application startup when `CREDENTIAL_ENCRYPTION_KEY` is missing or invalid;
+  Web Admin credential actions now surface backend failures explicitly.
+- Add minimal ECS setup/doctor and a TEST-only real HTTPS/GPS/Portal/RAM Role/OSS
+  presigned-upload smoke test. Server-internal keys are generated automatically.
+- Remove the administrator from the versioned TEST seed while preserving its
+  other synthetic data.
+- Add portable TEST snapshot export/restore with automatic rollback, compatibility
+  checks, GPS raw and Lighting OSS references; PROD restore is forbidden.
+
 ## 0.5.4 - 2026-08-11
 
 - Added a unified participant credential dialog for viewing and copying the OwnTracks endpoint, username/password and participant portal link at any time.

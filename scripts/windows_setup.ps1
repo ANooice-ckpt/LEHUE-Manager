@@ -51,23 +51,38 @@ Write-Host "[3/5] Verifying required Python modules..."
 Invoke-NativeChecked $Python -c "from zoneinfo import ZoneInfo; import fastapi, uvicorn, httpx, pytest, tzdata, cryptography; ZoneInfo('Asia/Shanghai'); print('fastapi', fastapi.__version__); print('uvicorn', uvicorn.__version__); print('httpx', httpx.__version__); print('pytest', pytest.__version__); print('cryptography', cryptography.__version__)"
 
 if (-not (Test-Path $EnvFile)) {
-    Write-Host "[4/5] Creating .env with a random admin token..."
+    Write-Host "[4/5] Creating .env with server-internal keys..."
     Copy-Item $EnvExample $EnvFile
     $Token = (& $Python -c "import secrets; print(secrets.token_urlsafe(48))").Trim()
     $CredentialKey = (& $Python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())").Trim()
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($Token)) {
-        throw "Failed to generate ADMIN_TOKEN."
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($Token) -or [string]::IsNullOrWhiteSpace($CredentialKey)) {
+        throw "Failed to generate server-internal keys."
     }
     $Content = Get-Content $EnvFile -Raw
     $Content = $Content.Replace("CHANGE_ME_TO_A_LONG_RANDOM_ADMIN_TOKEN", $Token)
     $Content = $Content.Replace("CHANGE_ME_TO_A_FERNET_KEY", $CredentialKey)
     Set-Content -Path $EnvFile -Value $Content -Encoding UTF8
 } else {
-    Write-Host "[4/5] .env already exists; checking credential encryption key."
+    Write-Host "[4/5] .env already exists; checking server-internal keys."
     $Content = Get-Content $EnvFile -Raw
-    if ($Content -notmatch '(?m)^CREDENTIAL_ENCRYPTION_KEY=') {
+    if ($Content -notmatch '(?m)^CREDENTIAL_ENCRYPTION_KEY=(?!CHANGE_ME)\S+') {
         $CredentialKey = (& $Python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())").Trim()
-        Add-Content -Path $EnvFile -Value "`nCREDENTIAL_ENCRYPTION_KEY=$CredentialKey" -Encoding UTF8
+        if ($Content -match '(?m)^CREDENTIAL_ENCRYPTION_KEY=') {
+            $Content = $Content -replace '(?m)^CREDENTIAL_ENCRYPTION_KEY=.*$', "CREDENTIAL_ENCRYPTION_KEY=$CredentialKey"
+            Set-Content -Path $EnvFile -Value $Content -Encoding UTF8
+        } else {
+            Add-Content -Path $EnvFile -Value "`nCREDENTIAL_ENCRYPTION_KEY=$CredentialKey" -Encoding UTF8
+        }
+    }
+    $Content = Get-Content $EnvFile -Raw
+    if ($Content -notmatch '(?m)^ADMIN_TOKEN=(?!CHANGE_ME)\S+') {
+        $Token = (& $Python -c "import secrets; print(secrets.token_urlsafe(48))").Trim()
+        if ($Content -match '(?m)^ADMIN_TOKEN=') {
+            $Content = $Content -replace '(?m)^ADMIN_TOKEN=.*$', "ADMIN_TOKEN=$Token"
+            Set-Content -Path $EnvFile -Value $Content -Encoding UTF8
+        } else {
+            Add-Content -Path $EnvFile -Value "`nADMIN_TOKEN=$Token" -Encoding UTF8
+        }
     }
 }
 
