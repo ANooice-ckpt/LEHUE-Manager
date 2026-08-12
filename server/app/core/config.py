@@ -134,6 +134,7 @@ class Settings:
     gps_daily_max_gap_seconds: int = _int("GPS_DAILY_MAX_GAP_SECONDS", 7200)
     questionnaire_evening_cutoff_hour: int = _int("QUESTIONNAIRE_EVENING_CUTOFF_HOUR", 12)
     qc_day_close_hour: int = _int("QC_DAY_CLOSE_HOUR", 18)
+    daily_qc_interval_seconds: int = _int("DAILY_QC_INTERVAL_SECONDS", 3600)
     gps_tile_url: str = os.getenv(
         "GPS_TILE_URL", "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
     ).strip()

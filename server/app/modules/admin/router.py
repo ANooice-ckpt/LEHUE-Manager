@@ -123,7 +123,7 @@ def logout(response: Response, operator=Depends(require_operator), lehue_session
 
 @router.get("/api/v1/web/me")
 def me(operator=Depends(require_operator)):
-    return {"username":operator.username,"display_name":operator.display_name,"role":operator.role,"csrf_token":operator.csrf_token}
+    return {"username":operator.username,"display_name":operator.display_name,"role":operator.role,"csrf_token":operator.csrf_token,"study_timezone":settings.study_timezone,"date_local":service.local_today()}
 
 
 @router.get("/api/v1/web/users")
@@ -312,6 +312,14 @@ async def lighting_upload(participant_id: str, date_local: str, filename: str, r
     finally:
         if path is not None:
             path.unlink(missing_ok=True)
+
+
+@router.post("/api/v1/web/subjects/{participant_id}/complete")
+def complete_subject(participant_id: str, operator=Depends(require_operator_write)):
+    try:
+        return service.complete_subject(participant_id, operator.username)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.post("/api/v1/web/lighting/{upload_uid}/qc")

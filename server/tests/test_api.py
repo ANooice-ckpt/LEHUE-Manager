@@ -1,5 +1,6 @@
 import base64
 import importlib
+import sqlite3
 import tempfile
 
 
@@ -35,6 +36,9 @@ def test_end_to_end(monkeypatch):
             conn.execute(
                 "INSERT INTO participants(participant_id,secret_salt,secret_hash,is_active,created_at_utc) VALUES(?,?,?,?,?)",
                 ("TEST01", salt, digest, 1, "2026-01-01T00:00:00Z"),
+            )
+            conn.execute(
+                "INSERT INTO study_subjects(participant_id,status,created_at_utc,updated_at_utc) VALUES('TEST01','running','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')"
             )
 
         from fastapi.testclient import TestClient
@@ -84,3 +88,24 @@ def test_end_to_end(monkeypatch):
             )
             assert local_day.status_code == 200
             assert local_day.json()["study_timezone"] == "Asia/Shanghai"
+
+
+def test_health_database_error_returns_503(monkeypatch):
+    with tempfile.TemporaryDirectory() as td:
+        monkeypatch.setenv("DATA_DIR", td)
+        import app.core.config as config; importlib.reload(config)
+        import app.core.db as dbmod; importlib.reload(dbmod)
+        import app.main as main; importlib.reload(main)
+        from fastapi.testclient import TestClient
+
+        class BrokenDb:
+            def __enter__(self):
+                raise sqlite3.OperationalError("database unavailable")
+            def __exit__(self, *_):
+                return False
+
+        monkeypatch.setattr(main, "db", lambda: BrokenDb())
+        with TestClient(main.app) as client:
+            response = client.get("/health")
+            assert response.status_code == 503
+            assert response.json()["database"] == "error"

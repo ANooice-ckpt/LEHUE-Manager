@@ -603,7 +603,7 @@ def daily_qc_rows() -> list[dict]:
     now_local = datetime.now(ZoneInfo(settings.study_timezone))
     today = now_local.date()
     with db() as conn:
-        subjects = [dict(row) for row in conn.execute("SELECT * FROM study_subjects WHERE status IN ('running','closed','finished') AND start_date<>'' ORDER BY participant_id")]
+        subjects = [dict(row) for row in conn.execute("SELECT * FROM study_subjects WHERE status IN ('running','completed') AND start_date<>'' ORDER BY participant_id")]
         forms = {(row["participant_id"], row["date_local"], row["form_key"]) for row in conn.execute("SELECT participant_id,date_local,form_key FROM questionnaire_responses")}
         light_rows = [dict(row) for row in conn.execute("SELECT * FROM lighting_files WHERE upload_status='qc'")]
     best: dict[tuple[str, str], dict] = {}

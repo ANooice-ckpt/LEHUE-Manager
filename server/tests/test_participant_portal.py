@@ -106,9 +106,9 @@ def test_participant_portal_questionnaire_flow(monkeypatch):
             assert data["progress"]["expected"] == 5
             assert data["progress"]["completed"] == 0
             assert [x["study_day"] for x in data["progress"]["days"]] == [1, 2]
-            assert data["cohort"] == {"running_others": 0, "completed_others": 0, "active_today": 0}
-            assert data["report"]["status"] == "locked"
-            assert client.get(f"/api/v1/portal/{token}/report").status_code == 403
+            assert "cohort" not in data and "report" not in data
+            assert data["read_only"] is False
+            assert data["owntracks"]["available"] is False
 
             morning = client.post(
                 f"/api/v1/portal/{token}/questionnaires/morning",
@@ -179,11 +179,5 @@ def test_participant_portal_questionnaire_flow(monkeypatch):
             source = {x["key"]: x for x in svc.data_sources()}
             assert source["questionnaire"]["status"] == "connected"
             assert source["questionnaire"]["records"] == 2
-
-            with dbmod.db() as conn:
-                conn.execute("UPDATE study_subjects SET end_date=? WHERE participant_id='001'", ((today_date - date.resolution).isoformat(),))
-            report = client.get(f"/api/v1/portal/{token}/report")
-            assert report.status_code == 200
-            assert report.json()["status"] == "preparing"
 
             assert client.get("/api/v1/portal/bad-token").status_code == 404

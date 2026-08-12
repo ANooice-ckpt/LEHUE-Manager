@@ -292,6 +292,10 @@ def _normalize_incident_statuses(conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE incidents SET status='closed' WHERE status='resolved'")
 
 
+def _normalize_subject_statuses(conn: sqlite3.Connection) -> None:
+    conn.execute("UPDATE study_subjects SET status='completed' WHERE status IN ('closed','finished')")
+
+
 def init_db() -> None:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     settings.raw_archive_dir.mkdir(parents=True, exist_ok=True)
@@ -306,6 +310,7 @@ def init_db() -> None:
         _ensure_questionnaire_columns(conn)
         _normalize_questionnaire_exposure_dates(conn)
         _normalize_incident_statuses(conn)
+        _normalize_subject_statuses(conn)
         conn.commit()
     finally:
         conn.close()

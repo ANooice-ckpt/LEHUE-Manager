@@ -359,10 +359,15 @@ def upsert_device(data: dict[str, Any], operator: str):
         raise ValueError("pack_id should look like D01 or PACK-01")
     now = now_iso()
     with db() as conn:
+        existing = conn.execute("SELECT status,current_participant_id FROM device_packs WHERE pack_id=?", (pack,)).fetchone()
+        requested_status = str(data.get("status") or "available")
+        if existing and existing["current_participant_id"] and requested_status != existing["status"]:
+            raise ValueError("occupied device status is managed by starting or completing the study")
+        status = existing["status"] if existing and existing["current_participant_id"] else requested_status
         conn.execute(
             """INSERT INTO device_packs(pack_id,status,current_participant_id,light_serial,ax3_serial,notes,updated_at_utc)
-               VALUES(?,?,?,?,?,?,?) ON CONFLICT(pack_id) DO UPDATE SET status=excluded.status,light_serial=excluded.light_serial,ax3_serial=excluded.ax3_serial,notes=excluded.notes,updated_at_utc=excluded.updated_at_utc""",
-            (pack,str(data.get("status") or "available"),str(data.get("current_participant_id") or ""),str(data.get("light_serial") or ""),str(data.get("ax3_serial") or ""),str(data.get("notes") or ""),now),
+               VALUES(?,?,'',?,?,?,?) ON CONFLICT(pack_id) DO UPDATE SET status=excluded.status,light_serial=excluded.light_serial,ax3_serial=excluded.ax3_serial,notes=excluded.notes,updated_at_utc=excluded.updated_at_utc""",
+            (pack,status,str(data.get("light_serial") or ""),str(data.get("ax3_serial") or ""),str(data.get("notes") or ""),now),
         )
     audit(operator, "device.upsert", "device_pack", pack)
     return pack
@@ -374,13 +379,21 @@ def start_subject(participant_id: str, data: dict[str, Any], operator: str, orig
     end = str(data.get("end_date") or "").strip()
     if not pack or not start or not end:
         raise ValueError("pack_id, start_date and end_date are required")
+    try:
+        start_day, end_day = date.fromisoformat(start), date.fromisoformat(end)
+    except ValueError as exc:
+        raise ValueError("start_date and end_date must use YYYY-MM-DD") from exc
+    if end_day < start_day:
+        raise ValueError("end_date cannot be before start_date")
     now = now_iso()
     with db() as conn:
         sub = conn.execute("SELECT * FROM study_subjects WHERE participant_id=?", (participant_id,)).fetchone()
         if not sub: raise ValueError("participant not found")
+        if sub["status"] != "scheduled":
+            raise ValueError("only a scheduled participant can be started")
         dev = conn.execute("SELECT * FROM device_packs WHERE pack_id=?", (pack,)).fetchone()
         if not dev: raise ValueError("device pack not found")
-        if dev["status"] not in {"available","assigned"} and dev["current_participant_id"] != participant_id:
+        if dev["status"] != "available" or dev["current_participant_id"]:
             raise ValueError("device pack is not available")
         holder = conn.execute("SELECT participant_id FROM study_subjects WHERE status='running' AND pack_id=? AND participant_id<>?", (pack,participant_id)).fetchone()
         if holder: raise ValueError(f"device pack is already used by {holder['participant_id']}")
@@ -406,9 +419,43 @@ def start_subject(participant_id: str, data: dict[str, Any], operator: str, orig
     return onboarding_card(participant_id, operator, origin)
 
 
+def complete_subject(participant_id: str, operator: str) -> dict[str, Any]:
+    now = now_iso()
+    returned = local_today()
+    with db() as conn:
+        subject = conn.execute("SELECT * FROM study_subjects WHERE participant_id=?", (participant_id,)).fetchone()
+        if not subject:
+            raise ValueError("participant not found")
+        if subject["status"] != "running":
+            raise ValueError("only a running participant can be completed")
+        conn.execute(
+            "UPDATE study_subjects SET status='completed',final_end=?,updated_at_utc=? WHERE participant_id=?",
+            (returned, now, participant_id),
+        )
+        if subject["pack_id"]:
+            conn.execute(
+                """UPDATE device_packs SET status='available',current_participant_id='',returned_date=?,updated_at_utc=?
+                   WHERE pack_id=? AND current_participant_id=?""",
+                (returned, now, subject["pack_id"], participant_id),
+            )
+        conn.execute("UPDATE participants SET is_active=0 WHERE participant_id=?", (participant_id,))
+    audit(operator, "participant.complete", "participant", participant_id, {"pack_id": subject["pack_id"], "returned_date": returned})
+    return {"ok": True, "participant_id": participant_id, "status": "completed", "returned_date": returned}
+
+
 def list_incidents():
     with db() as conn:
-        return [dict(r) for r in conn.execute("SELECT * FROM incidents ORDER BY status='closed', updated_at_utc DESC")]
+        rows = [dict(r) for r in conn.execute(
+            """SELECT i.*,s.portal_token_ciphertext FROM incidents i
+               LEFT JOIN study_subjects s ON s.participant_id=i.participant_id
+               ORDER BY i.status='closed',i.updated_at_utc DESC"""
+        )]
+    domain = settings.domain.strip().rstrip("/")
+    origin = f"https://{domain}" if domain not in {"", "localhost", "127.0.0.1"} else "http://127.0.0.1:8085"
+    for row in rows:
+        ciphertext = row.pop("portal_token_ciphertext", "")
+        row["portal_url"] = f"{origin}/p/{decrypt_credential(ciphertext)}" if ciphertext else ""
+    return rows
 
 
 def add_incident(data: dict[str, Any], operator: str):
@@ -467,17 +514,24 @@ def rerun_lighting_qc(upload_uid: str, operator: str):
 
 
 def daily_qc(run: bool, operator: str = ""):
-    if not run:
-        rows = light_service.daily_qc_rows()
-        return {
-            "rows": rows,
-            "summary": {
-                "total": len(rows),
-                "ok": sum(row["status"] == "ok" for row in rows),
-                "missing": sum(row["status"] == "missing" for row in rows),
-                "pending": sum(row["status"] == "pending" for row in rows),
-            },
+    result = light_service.run_daily_qc(operator) if run else None
+    rows = result["rows"] if result else light_service.daily_qc_rows()
+    with db() as conn:
+        encrypted_tokens = {
+            row["participant_id"]: row["portal_token_ciphertext"]
+            for row in conn.execute("SELECT participant_id,portal_token_ciphertext FROM study_subjects WHERE portal_token_ciphertext<>''")
         }
-    result = light_service.run_daily_qc(operator)
-    audit(operator, "acquisition_qc.run", "daily_qc", "", result["summary"])
-    return result
+    domain = settings.domain.strip().rstrip("/")
+    origin = f"https://{domain}" if domain not in {"", "localhost", "127.0.0.1"} else "http://127.0.0.1:8085"
+    for row in rows:
+        ciphertext = encrypted_tokens.get(row["participant_id"])
+        row["portal_url"] = f"{origin}/p/{decrypt_credential(ciphertext)}" if ciphertext else ""
+    summary = result["summary"] if result else {
+        "total": len(rows),
+        "ok": sum(row["status"] == "ok" for row in rows),
+        "missing": sum(row["status"] == "missing" for row in rows),
+        "pending": sum(row["status"] == "pending" for row in rows),
+    }
+    if run:
+        audit(operator, "acquisition_qc.run", "daily_qc", "", summary)
+    return {"rows": rows, "summary": summary, **({"operator": result["operator"]} if result else {})}

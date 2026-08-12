@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import secrets
 import sqlite3
+import base64
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -212,45 +213,33 @@ def _portal_progress(conn, subject, targets: dict[str, date]) -> dict:
     }
 
 
-def _cohort_progress(conn, participant_id: str, today: date) -> dict:
-    running_others = completed_others = 0
-    for row in conn.execute(
-        "SELECT participant_id,status,expected_start,expected_end,start_date,end_date,final_end FROM study_subjects WHERE participant_id<>?",
-        (participant_id,),
-    ):
-        start, end = _study_bounds(row)
-        explicitly_completed = row["status"] in {"completed", "finished", "closed"}
-        if row["status"] == "running" and start and end and start <= today <= end:
-            running_others += 1
-        elif explicitly_completed or (row["status"] == "running" and end and end < today):
-            completed_others += 1
-    local_start = datetime(today.year, today.month, today.day, tzinfo=ZoneInfo(settings.study_timezone))
-    utc_start = local_start.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-    utc_end = (local_start + timedelta(days=1)).astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-    active_today = conn.execute(
-        """SELECT COUNT(DISTINCT participant_id) n FROM (
-               SELECT participant_id FROM questionnaire_responses
-                WHERE calendar_date_local=? AND participant_id<>?
-               UNION
-               SELECT participant_id FROM lighting_files
-                WHERE uploaded_at_utc>=? AND uploaded_at_utc<? AND participant_id<>?
-           )""",
-        (today.isoformat(), participant_id, utc_start, utc_end, participant_id),
-    ).fetchone()["n"]
-    return {
-        "running_others": running_others,
-        "completed_others": completed_others,
-        "active_today": int(active_today),
+def _public_origin() -> str:
+    domain = settings.domain.strip().rstrip("/")
+    return f"https://{domain}" if domain not in {"", "localhost", "127.0.0.1"} else "http://127.0.0.1:8085"
+
+
+def _owntracks_config(subject) -> dict:
+    with db() as conn:
+        credential = conn.execute(
+            "SELECT secret_ciphertext FROM participants WHERE participant_id=? AND is_active=1",
+            (subject["participant_id"],),
+        ).fetchone()
+    if not credential or not credential["secret_ciphertext"] or subject["status"] != "running":
+        return {"available": False}
+    from app.core.security import decrypt_credential
+    password = decrypt_credential(credential["secret_ciphertext"])
+    endpoint = f"{_public_origin()}/api/v1/gps/owntracks"
+    config = {
+        "_type": "configuration", "mode": 3, "auth": True, "url": endpoint,
+        "username": subject["participant_id"], "password": password,
+        "deviceId": subject["participant_id"], "tid": subject["participant_id"][-2:],
+        "locatorInterval": 10, "locatorDisplacement": 10, "adapt": 0, "downgrade": 0,
     }
-
-
-def _report_state(subject, today: date) -> dict:
-    _, end = _study_bounds(subject)
-    ended = subject["status"] in {"completed", "finished", "closed"} or bool(subject["start_date"] and end and end < today)
+    config_json = json.dumps(config, ensure_ascii=False, separators=(",", ":"))
     return {
-        "available": False,
-        "status": "preparing" if ended else "locked",
-        "unlocks_after": end.isoformat() if end else "",
+        "available": True,
+        "uri": "owntracks:///config?inline=" + base64.b64encode(config_json.encode()).decode(),
+        "config_json": config_json,
     }
 
 
@@ -271,7 +260,6 @@ def portal_state(token: str) -> dict:
             )
         }
         progress = _portal_progress(conn, subject, targets)
-        cohort = _cohort_progress(conn, subject["participant_id"], local_now.date())
     forms = []
     for is_makeup in (False, True):
         for definition in definitions:
@@ -334,33 +322,19 @@ def portal_state(token: str) -> dict:
             "end_date": subject["end_date"] or subject["expected_end"],
             "pack_id": subject["pack_id"],
         },
+        "read_only": subject["status"] != "running",
+        "owntracks": _owntracks_config(subject),
         "progress": progress,
-        "cohort": cohort,
-        "report": _report_state(subject, local_now.date()),
         "gps": _gps_state(subject["participant_id"]),
         "lighting": lighting,
         "lighting_tasks": lighting_tasks,
         "forms": forms,
-        "notice": "这是 LEHUE 被试专属工作入口。链接本身用于识别身份，请勿转发给他人。",
+        "notice": "实验已完成；此入口保留用于查看既有记录。" if subject["status"] == "completed" else "这是 LEHUE 被试专属工作入口。链接本身用于识别身份，请勿转发给他人。",
         "help": [
             {"title": "OwnTracks 没有回传", "text": "打开 OwnTracks，确认使用 Move 模式；允许始终定位、精确位置和后台运行，然后点一次上传/定位按钮。"},
             {"title": "问卷跨过午夜", "text": "晨间问卷记录昨晚睡眠；睡前问卷和 Lighting 仍归入入睡前开始的实验日。Portal 已自动标注归属日期。"},
             {"title": "Lighting 选错文件", "text": "直接重新上传正确的 CSV、XLSX 或 TXT。已收到的 raw 会保留，系统按实验日显示质量更好的结果。"},
         ],
-    }
-
-
-def participant_report(token: str) -> dict:
-    subject = _resolve_subject(token)
-    if not subject:
-        raise LookupError("invalid participant link")
-    report = _report_state(subject, local_today())
-    if report["status"] == "locked":
-        raise PermissionError("实验结束后才可查看个人睡眠与光照报告")
-    return {
-        **report,
-        "participant_id": subject["participant_id"],
-        "message": "实验报告接口已就绪；报告生成完成后将在这里开放查看。",
     }
 
 
@@ -396,6 +370,8 @@ def complete_lighting_direct(token: str, upload_uid: str) -> dict:
     subject = _resolve_subject(token)
     if not subject:
         raise LookupError("invalid participant link")
+    if subject["status"] != "running":
+        raise ValueError("the completed study portal is read-only")
     return light_service.complete_direct_upload(subject["participant_id"], upload_uid)
 
 

@@ -108,6 +108,9 @@ def test_web_admin_flow(monkeypatch):
             assert base64.b64decode(inline).decode() == card['owntracks_config_json']
             assert 'LEHUE 入组信息' in card['contact_text']
             assert client.get('/api/v1/web/subjects/001/onboarding').json()['owntracks_config'] == card['owntracks_config']
+            assert client.get(f"/api/v1/portal/{rotated_portal.removeprefix('/p/')}").json()['owntracks']['available'] is True
+            assert client.post('/api/v1/web/subjects/001/start', json={'pack_id':'D01','start_date':'2026-09-01','end_date':'2026-09-14'}, headers=h).status_code == 400
+            assert client.post('/api/v1/web/subjects/001/start', json={'pack_id':'D01','start_date':'bad','end_date':'2026-09-14'}, headers=h).status_code == 400
             edited_subject = client.post('/api/v1/web/subjects/001', json={'batch_id':'B2','assigned_ra':'ra01','planned_start':'2026-08-31','planned_end':'2026-09-15','notes':'late return'}, headers=h)
             assert edited_subject.status_code == 200
             subject = next(x for x in client.get('/api/v1/web/subjects').json() if x['participant_id'] == '001')
@@ -115,6 +118,7 @@ def test_web_admin_flow(monkeypatch):
             assert 'study_day' in subject
             device = next(x for x in client.get('/api/v1/web/devices').json() if x['pack_id'] == 'D01')
             assert device['issued_date'] == '2026-08-31' and device['expected_return_date'] == '2026-09-15'
+            assert client.post('/api/v1/web/devices', json={'pack_id':'D01','status':'repair'}, headers=h).status_code == 400
             invalid_period = client.post('/api/v1/web/subjects/001', json={'planned_start':'2026-09-16','planned_end':'2026-09-15'}, headers=h)
             assert invalid_period.status_code == 400
             track = client.get('/api/v1/web/subjects/001/gps-track?hours=12')
@@ -149,6 +153,23 @@ def test_web_admin_flow(monkeypatch):
             assert client.get('/admin').status_code == 200
             assert client.get('/admin/vendor/leaflet.css').status_code == 200
             assert client.get('/admin/vendor/leaflet.js').status_code == 200
+
+            completed = client.post('/api/v1/web/subjects/001/complete', json={}, headers=h)
+            assert completed.status_code == 200 and completed.json()['status'] == 'completed'
+            assert client.post('/api/v1/web/subjects/001/complete', json={}, headers=h).status_code == 400
+            with dbmod.db() as conn:
+                completed_subject = conn.execute("SELECT status FROM study_subjects WHERE participant_id='001'").fetchone()
+                returned_device = conn.execute("SELECT status,current_participant_id,returned_date FROM device_packs WHERE pack_id='D01'").fetchone()
+                credential = conn.execute("SELECT is_active FROM participants WHERE participant_id='001'").fetchone()
+            assert completed_subject['status'] == 'completed'
+            assert returned_device['status'] == 'available' and returned_device['current_participant_id'] == '' and returned_device['returned_date']
+            assert credential['is_active'] == 0
+            portal_token = rotated_portal.removeprefix('/p/')
+            portal_state = client.get(f'/api/v1/portal/{portal_token}')
+            assert portal_state.status_code == 200 and portal_state.json()['read_only'] is True
+            assert portal_state.json()['owntracks']['available'] is False
+            gps_headers = {'Authorization': 'Basic ' + base64.b64encode(f'001:{rotated_gps}'.encode()).decode()}
+            assert client.post('/api/v1/gps/owntracks', json={'_type':'location','_id':'after-complete','tst':1786276022,'lat':1,'lon':1}, headers=gps_headers).status_code == 403
 
             backup = client.get('/api/v1/web/backup')
             assert backup.status_code == 200

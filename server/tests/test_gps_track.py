@@ -77,6 +77,9 @@ def test_auth_cache_skips_pbkdf2_and_reset_invalidates(monkeypatch, tmp_path):
             "INSERT INTO participants(participant_id,secret_salt,secret_hash,created_at_utc) VALUES('001',?,?,?)",
             (salt, digest, gps.iso_utc(datetime.now(timezone.utc))),
         )
+        conn.execute(
+            "INSERT INTO study_subjects(participant_id,status,created_at_utc,updated_at_utc) VALUES('001','running','now','now')"
+        )
     calls = 0
     original = gps.verify_secret
 

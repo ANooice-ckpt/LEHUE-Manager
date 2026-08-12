@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Restrict GPS ingest to running participants and make study lifecycle changes
+  explicit: scheduled → running → completed, with atomic device return and GPS
+  credential deactivation while the completed Portal remains read-only.
+- Use the configured study timezone for Admin defaults, return HTTP 503 when the
+  database health check fails, and run the existing idempotent Daily QC hourly.
+- Put the existing dynamic OwnTracks configuration in the Participant Portal,
+  attach Portal links to QC/incident contact text, and remove the unimplemented
+  personal-report and non-acquisition cohort placeholders.
 - Generate a non-persistent Onboarding Card when a study starts, including the
   existing Portal/GPS credentials, study dates, devices, copyable fixed contact
   text, and an official OwnTracks HTTP `.otrc`/inline configuration.

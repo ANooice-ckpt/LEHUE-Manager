@@ -57,7 +57,9 @@ def event_uid(payload: dict[str, Any]) -> str:
 def authenticate_participant(participant_id: str, secret: str) -> bool:
     with db() as conn:
         row = conn.execute(
-            "SELECT secret_salt, secret_hash, is_active FROM participants WHERE participant_id=?",
+            """SELECT p.secret_salt,p.secret_hash,p.is_active
+               FROM participants p JOIN study_subjects s ON s.participant_id=p.participant_id
+               WHERE p.participant_id=? AND s.status='running'""",
             (participant_id,),
         ).fetchone()
     if not row or not row["is_active"]:

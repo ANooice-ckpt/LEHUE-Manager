@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.core.db import db, init_db
@@ -12,6 +14,17 @@ from app.core.test_seed import install_test_seed_if_empty
 from app.modules.gps.router import router as gps_router
 from app.modules.admin.router import router as admin_router
 from app.modules.participant.router import router as participant_router
+from app.modules.light import service as light_service
+
+
+async def _scheduled_daily_qc() -> None:
+    while True:
+        await asyncio.sleep(settings.daily_qc_interval_seconds)
+        try:
+            await asyncio.to_thread(light_service.run_daily_qc, "system:scheduler")
+        except Exception:
+            # A failed scheduled pass must not stop the API or future passes.
+            pass
 
 
 @asynccontextmanager
@@ -19,7 +32,18 @@ async def lifespan(app: FastAPI):
     install_test_seed_if_empty()
     init_db()
     init_identity_db()
-    yield
+    qc_task = None
+    if settings.daily_qc_interval_seconds > 0:
+        qc_task = asyncio.create_task(_scheduled_daily_qc())
+    try:
+        yield
+    finally:
+        if qc_task:
+            qc_task.cancel()
+            try:
+                await qc_task
+            except asyncio.CancelledError:
+                pass
 
 
 app = FastAPI(
@@ -93,7 +117,7 @@ def health():
             "last_event_received_at_utc": last["received_at_utc"] if last else None,
         }
     except sqlite3.Error as exc:
-        return {
+        return JSONResponse(status_code=503, content={
             "status": "error",
             "project": settings.project_name,
             "version": settings.app_version,
@@ -101,4 +125,4 @@ def health():
             "light_storage_backend": settings.light_storage_backend,
             "database": "error",
             "detail": str(exc),
-        }
+        })
