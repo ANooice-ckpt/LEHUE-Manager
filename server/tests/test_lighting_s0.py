@@ -260,10 +260,10 @@ def test_s0_snapshot_import_preserves_candidate_identity(monkeypatch):
         header = "序号,您的年龄,您的性别,16、您是否愿意参与本研究并接受补贴？,19、您的手机号（仅实验负责人可见）：,您的手机系统是：,姓名或称呼\n"
         first = (header + "1,20-29,女,愿意,138 0000 0001,iOS,候选甲\n2,30-39,男,不愿意,13800000002,Android,候选乙\n").encode("utf-8-sig")
         result = s0.import_s0("S0.csv", first, "pi")
-        assert result == {"import_uid": result["import_uid"], "total": 2, "imported": 1, "filtered": 1, "duplicate": False}
+        assert result == {"import_uid": result["import_uid"], "total": 2, "imported": 2, "filtered": 0, "duplicate": False}
         assert s0.import_s0("S0.csv", first, "pi")["duplicate"] is True
         with idb.identity_db() as conn:
-            original = dict(conn.execute("SELECT * FROM candidates").fetchone())
+            original = dict(conn.execute("SELECT * FROM candidates WHERE source_seq='1'").fetchone())
             conn.execute("UPDATE candidates SET linked_participant_id='001',name='人工校正姓名',notes='已联系' WHERE candidate_uid=?", (original["candidate_uid"],))
 
         second = (header + "1,20-29,女,愿意,13800000001,iOS,问卷新姓名\n3,20-29,男,愿意,13800000003,Android,候选丙\n").encode("utf-8-sig")
@@ -271,9 +271,53 @@ def test_s0_snapshot_import_preserves_candidate_identity(monkeypatch):
         assert result2["imported"] == 2
         with idb.identity_db() as conn:
             rows = [dict(row) for row in conn.execute("SELECT * FROM candidates ORDER BY source_seq")]
-            assert len(rows) == 2
+            assert len(rows) == 3
             assert rows[0]["candidate_uid"] == original["candidate_uid"]
             assert rows[0]["linked_participant_id"] == "001"
             assert rows[0]["name"] == "人工校正姓名"
             assert rows[0]["notes"] == "已联系"
             assert conn.execute("SELECT COUNT(*) n FROM s0_imports").fetchone()["n"] == 2
+
+
+def test_current_recruitment_s0_maps_mechanism_and_operations(monkeypatch):
+    with tempfile.TemporaryDirectory() as td:
+        _, idb, _, s0, _, _ = _reload(monkeypatch, td)
+        headers = [
+            "序号", "您的年龄", "您的性别", "您目前是否主要在北京市工作、学习或生活？", "您的学历", "您目前最接近哪类身份？", "总体而言，您认为自己目前的健康状况如何？",
+            "您目前的日常作息更接近哪种？", "在没有工作或学习安排限制时，您通常更倾向于：",
+            "典型工作/学习日中，您的主要活动方式更接近哪种？",
+            "典型工作/学习日中，您的工作/学习时间有多少比例在同一个固定工位、座位或学习位完成？",
+            "典型工作/学习日中，您的屏幕工作/学习时间占总工作/学习时间的比例大约为：",
+            "自然光是否充足", "是否依赖开灯照明",
+            "典型日间活动中，您白天在户外、半户外或明显强自然光环境中的累计时间大约为？",
+            "您的主要工作/学习地点大致位于北京市哪个区？", "您的主要居住地点大致位于北京市哪个区？",
+            "典型工作或学习日中，您的主要通勤方式是：", "您典型工作/学习日的单程通勤时间约为：",
+            "您的手机系统是：", "您是否愿意参与本研究并接受补贴？", "您方便参与实验的时间段是：",
+            "您更方便的设备领取和归还方式是：", "您的手机号（仅实验负责人可见）：",
+        ]
+        values = [
+            "1", "25-34岁", "女", "是", "硕士", "研究生或科研人员", "较好", "日间固定作息为主", "稍偏晚",
+            "久坐阅读、写作、电脑工作或会议为主", "大于75%", "50%-75%", "较少", "较多",
+            "30-60分钟", "海淀区", "朝阳区", "地铁", "30-60分钟", "iOS", "需要了解后再决定",
+            "未来2个月内可参与", "均可", "13800000001",
+        ]
+        raw = (",".join(headers) + "\n" + ",".join(values) + "\n").encode("utf-8-sig")
+        assert s0.import_s0("recruit0812.csv", raw, "pi")["imported"] == 1
+        with idb.identity_db() as conn:
+            row = dict(conn.execute("SELECT * FROM candidates").fetchone())
+        assert row["education"] == "硕士"
+        assert row["beijing_based"] == "是" and row["health_rating"] == "较好"
+        assert row["fixed_position_ratio"] == "大于75%"
+        assert row["indoor_daylight"] == "较少"
+        assert row["outdoor_time"] == "30-60分钟"
+        assert row["screen_time_ratio"] == "50%-75%"
+        assert row["exposure_mechanism"] == "固定位置主导 × 日光受限"
+        assert row["commute_mode"] == "地铁" and row["commute_duration"] == "30-60分钟"
+        assert row["willingness"] == "需要了解后再决定"
+        assert row["light_type"] == ""
+        assert "自然光是否充足" in row["s0_raw_json"]
+
+        assert s0._mechanism_category("大于75%", "很多") == "固定位置主导 × 日光可达"
+        assert s0._mechanism_category("50%–75%", "较少") == "固定位置主导 × 日光受限"
+        assert s0._mechanism_category("小于50%", "一般") == "非固定位置主导 × 日光可达"
+        assert s0._mechanism_category("不固定", "很少") == "非固定位置主导 × 日光受限"

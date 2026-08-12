@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Update S0 import and candidate controls to the August 12 recruitment form:
+  structure demographics/schedules, exposure-mechanism variables, commute and
+  participation operations; derive the fixed-position/daylight four-quadrant
+  category and retire `light_type` from active use without dropping the column.
+
 - Unify Admin backup downloads, portable TEST snapshots, and timed OSS backups
   as one State Bundle containing both SQLite databases, GPS raw, manifest, and
   credential metadata while retaining Lighting as canonical OSS references.

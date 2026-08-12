@@ -22,7 +22,7 @@ from app.modules.light import service as light_service
 SUBJECT_RE = re.compile(r"^\d{3}$")
 PACK_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{1,15}$")
 CANDIDATE_EDIT_FIELDS = [
-    "name", "phone", "wechat", "source", "sex", "age_group", "identity_type", "light_type",
+    "name", "phone", "wechat", "source", "sex", "age_group", "identity_type",
     "work_district", "home_district", "phone_os", "pickup_method", "availability", "notes",
 ]
 
@@ -104,7 +104,10 @@ def list_candidates():
     with identity_db() as conn:
         return [dict(r) for r in conn.execute(
             """SELECT candidate_uid,linked_participant_id,name,phone,wechat,source,sex,age_group,
-                      identity_type,light_type,work_district,home_district,phone_os,pickup_method,
+                      beijing_based,identity_type,education,health_rating,work_schedule,chronotype,activity_mode,
+                      fixed_position_ratio,screen_time_ratio,indoor_daylight,artificial_light_reliance,
+                      outdoor_time,exposure_mechanism,work_district,home_district,commute_mode,
+                      commute_duration,phone_os,willingness,pickup_method,
                       availability,notes,source_seq,in_latest_snapshot,created_at_utc,updated_at_utc
                FROM candidates
                ORDER BY in_latest_snapshot DESC, linked_participant_id IS NOT NULL DESC, updated_at_utc DESC"""

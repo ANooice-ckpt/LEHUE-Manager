@@ -151,39 +151,24 @@ def _stable_keys(source_seq: str, phone: str, wechat: str) -> list[str]:
     return keys
 
 
-def _willing(row: dict[str, str]) -> bool:
-    hit = None
-    for header, value in row.items():
-        key = _clean_header(header)
-        if "参与" in key and (("研究" in key and re.search(r"愿意|同意|接受|补贴", key)) or "补贴" in key):
-            hit = str(value or "").strip()
-            break
-    if hit is None:
-        return True
-    if not hit or re.search(r"不愿|不同意|拒绝|否|不接受", hit):
-        return False
-    return bool(re.search(r"愿意|同意|接受|是|可以|可", hit))
-
-
-def _infer_light_type(row: dict[str, str]) -> str:
-    fixed = _preferred(
-        row,
-        ["典型工作/学习日中，您的工作/学习时间有多少比例在同一个固定工位、座位或学习位完成", "工作/学习时间在同一固定位置完成的比例", "固定位置占比"],
-        ["固定工位", "固定位置", "同一个固定"],
-    )
-    screen = _preferred(
-        row,
-        ["典型工作/学习日中，您的屏幕工作/学习时间占总工作/学习时间的比例大约为", "屏幕工作/学习时间占总工作/学习时间的比例", "屏幕时间占比"],
-        ["屏幕"],
-    )
-    if "<50" in fixed or "小于50" in fixed:
-        return "混合移动室内型"
-    if any(value in fixed for value in ("70", "75", "大于75")) and any(value in screen for value in ("70", "75", "大于75")):
-        return "固定高屏幕工位型"
-    return "固定综合办公型" if fixed else ""
+def _mechanism_category(fixed: str, daylight: str) -> str:
+    normalized_fixed = re.sub(r"[—–－]", "-", fixed).replace(" ", "")
+    fixed_group = ""
+    if normalized_fixed == "50%-75%" or "大于75" in normalized_fixed:
+        fixed_group = "固定位置主导"
+    elif "小于50" in normalized_fixed or normalized_fixed == "不固定":
+        fixed_group = "非固定位置主导"
+    daylight_group = ""
+    if daylight in {"一般", "较多", "很多"}:
+        daylight_group = "日光可达"
+    elif daylight in {"很少", "较少"}:
+        daylight_group = "日光受限"
+    return f"{fixed_group} × {daylight_group}" if fixed_group and daylight_group else ""
 
 
 def _mapped(row: dict[str, str]) -> dict[str, str]:
+    fixed = _preferred(row, ["典型工作/学习日中，您的工作/学习时间有多少比例在同一个固定工位、座位或学习位完成"], ["固定工位", "固定位置"])
+    daylight = _preferred(row, ["自然光是否充足"], ["自然光充足"])
     return {
         "source_seq": _normalize_seq(_pick_exact(row, ["序号"]) or _pick(row, ["序号"])),
         "name": _preferred(row, ["姓名或称呼", "姓名", "称呼"]),
@@ -191,11 +176,25 @@ def _mapped(row: dict[str, str]) -> dict[str, str]:
         "wechat": _preferred(row, ["微信号", "微信"]),
         "sex": _preferred(row, ["您的性别", "性别"]),
         "age_group": _preferred(row, ["您的年龄", "年龄"]),
+        "beijing_based": _preferred(row, ["您目前是否主要在北京市工作、学习或生活", "是否主要在北京市"]),
+        "education": _preferred(row, ["您的学历", "学历"]),
         "identity_type": _preferred(row, ["您目前最接近哪类身份", "当前主要身份", "主要身份", "身份"]),
-        "light_type": _infer_light_type(row),
+        "health_rating": _preferred(row, ["总体而言，您认为自己目前的健康状况如何", "健康状况"]),
+        "work_schedule": _preferred(row, ["您目前的日常作息更接近哪种", "日常作息"]),
+        "chronotype": _preferred(row, ["在没有工作或学习安排限制时，您通常更倾向于", "通常更倾向于"]),
+        "activity_mode": _preferred(row, ["典型工作/学习日中，您的主要活动方式更接近哪种", "主要活动方式"]),
+        "fixed_position_ratio": fixed,
+        "screen_time_ratio": _preferred(row, ["典型工作/学习日中，您的屏幕工作/学习时间占总工作/学习时间的比例大约为"], ["屏幕工作", "屏幕时间"]),
+        "indoor_daylight": daylight,
+        "artificial_light_reliance": _preferred(row, ["是否依赖开灯照明"], ["依赖开灯"]),
+        "outdoor_time": _preferred(row, ["典型日间活动中，您白天在户外、半户外或明显强自然光环境中的累计时间大约为"], ["户外", "强自然光环境"]),
+        "exposure_mechanism": _mechanism_category(fixed, daylight),
         "work_district": _preferred(row, ["您的主要工作/学习地点大致位于北京市哪个区", "主要工作/学习区", "工作/学习区"], ["工作/学习地点"]),
         "home_district": _preferred(row, ["您的主要居住地点大致位于北京市哪个区", "主要居住区", "居住区"], ["居住地点"]),
+        "commute_mode": _preferred(row, ["典型工作或学习日中，您的主要通勤方式是", "主要通勤方式"]),
+        "commute_duration": _preferred(row, ["您典型工作/学习日的单程通勤时间约为", "单程通勤时间"]),
         "phone_os": _preferred(row, ["您的手机系统是", "手机系统"]),
+        "willingness": _preferred(row, ["您是否愿意参与本研究并接受补贴", "参与本研究并接受补贴"], ["是否愿意参与"]),
         "pickup_method": _preferred(row, ["您更方便的设备领取和归还方式", "设备领取和归还方式", "领取和归还方式"], ["领取", "归还"]),
         "availability": _preferred(row, ["您方便参与实验的时间段是", "方便参与实验的时间段", "可参与时间"], ["参与实验的时间"]),
     }
@@ -237,15 +236,12 @@ def import_s0(filename: str, raw: bytes, operator: str) -> dict:
         imported = 0
         filtered = 0
         for row in rows:
-            if not _willing(row):
-                filtered += 1
-                continue
             mapped = _mapped(row)
             old = next((old_by_key[key] for key in _stable_keys(mapped["source_seq"], mapped["phone"], mapped["wechat"]) if key in old_by_key), {})
             candidate_uid = old.get("candidate_uid") or f"cand_{secrets.token_hex(8)}"
             seen.add(candidate_uid)
             # Preserve fields which may have been corrected manually after import.
-            for field in ("name", "phone", "wechat", "light_type"):
+            for field in ("name", "phone", "wechat"):
                 mapped[field] = old.get(field) or mapped[field]
             values = {
                 **mapped,
@@ -260,8 +256,11 @@ def import_s0(filename: str, raw: bytes, operator: str) -> dict:
             }
             fields = [
                 "linked_participant_id", "name", "phone", "wechat", "source", "sex", "age_group",
-                "identity_type", "light_type", "work_district", "home_district", "phone_os",
-                "pickup_method", "availability", "notes", "source_seq", "in_latest_snapshot",
+                "identity_type", "beijing_based", "education", "health_rating", "work_schedule", "chronotype", "activity_mode",
+                "fixed_position_ratio", "screen_time_ratio", "indoor_daylight", "artificial_light_reliance",
+                "outdoor_time", "exposure_mechanism", "work_district", "home_district", "commute_mode",
+                "commute_duration", "phone_os", "willingness", "pickup_method", "availability",
+                "notes", "source_seq", "in_latest_snapshot",
                 "s0_import_uid", "s0_raw_json", "created_at_utc", "updated_at_utc",
             ]
             conn.execute(
@@ -284,4 +283,3 @@ def import_s0(filename: str, raw: bytes, operator: str) -> dict:
             (import_uid, Path(filename).name, digest, raw, len(rows), imported, filtered, now, operator),
         )
     return {"import_uid": import_uid, "total": len(rows), "imported": imported, "filtered": filtered, "duplicate": False}
-
