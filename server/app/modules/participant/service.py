@@ -224,7 +224,8 @@ def _owntracks_config(subject) -> dict:
             "SELECT secret_ciphertext FROM participants WHERE participant_id=? AND is_active=1",
             (subject["participant_id"],),
         ).fetchone()
-    if not credential or not credential["secret_ciphertext"] or subject["status"] != "running":
+    preparation_mode = subject["status"] in {"scheduled", "ready"} and bool(subject["preparation_started_at_utc"])
+    if not credential or not credential["secret_ciphertext"] or (subject["status"] != "running" and not preparation_mode):
         return {"available": False}
     from app.core.security import decrypt_credential
     password = decrypt_credential(credential["secret_ciphertext"])
@@ -248,6 +249,40 @@ def portal_state(token: str) -> dict:
     if not subject:
         raise LookupError("invalid participant link")
     local_now = datetime.now(ZoneInfo(settings.study_timezone))
+    if subject["status"] in {"scheduled", "ready"} and subject["preparation_started_at_utc"]:
+        today = local_now.date().isoformat()
+        with db() as conn:
+            gps_ok = bool(conn.execute(
+                "SELECT 1 FROM gps_locations WHERE participant_id=? AND received_at_utc>=? LIMIT 1",
+                (subject["participant_id"], subject["preparation_started_at_utc"]),
+            ).fetchone())
+            lighting_row = conn.execute(
+                """SELECT * FROM lighting_files WHERE participant_id=? AND is_test=1
+                   AND upload_status='qc' AND uploaded_at_utc>=? ORDER BY uploaded_at_utc DESC LIMIT 1""",
+                (subject["participant_id"], subject["preparation_started_at_utc"]),
+            ).fetchone()
+        light_state = light_service._public_upload(lighting_row) if lighting_row else {
+            "status": "missing", "uploaded": False, "quality": None, "valid_pct": None,
+        }
+        light_state.update({
+            "task_id": f"lighting-test:{today}", "title": "Lighting 测试上传", "date_local": today,
+            "study_day": 0, "is_test": True, "direct_upload": settings.light_storage_backend == "oss",
+            "time_scope": {"range": "准备测试", "explanation": "该文件仅用于验证 Lighting 实际上传链路，不计入正式 Study Day。"},
+        })
+        completed_tests = int(gps_ok) + int(bool(lighting_row))
+        return {
+            "study_title": "光迹计划（北京）", "portal_title": "LEHUE Study",
+            "participant_id": subject["participant_id"], "study_timezone": settings.study_timezone,
+            "status": "running", "lifecycle_status": subject["status"], "mode": "preparation", "date_local": today,
+            "calendar_date_local": today, "experiment_date_local": "", "study_day": 0, "total_days": 0,
+            "study": {"start_date": subject["expected_start"], "end_date": subject["expected_end"], "pack_id": subject["pack_id"]},
+            "read_only": False, "owntracks": _owntracks_config(subject),
+            "progress": {"completed": completed_tests, "expected": 2, "percent": completed_tests * 50, "days": []},
+            "readiness": {"gps_test_received": gps_ok, "lighting_test_uploaded": bool(lighting_row), "ready": subject["status"] == "ready"},
+            "gps": _gps_state(subject["participant_id"]), "lighting": light_state, "lighting_tasks": [light_state], "forms": [],
+            "notice": "当前为测试/教学模式。请完成一次 GPS 实际回传和一次 Lighting 测试上传；两项成功后系统会自动标记 Ready，正式实验尚未开始。",
+            "help": [],
+        }
     definitions = list_forms()
     targets = {definition["key"]: form_target_date(definition["key"], local_now) for definition in definitions}
     active_assignment = form_assignment(subject, "evening", targets["evening"], local_now.date())
@@ -338,39 +373,44 @@ def portal_state(token: str) -> dict:
     }
 
 
-def _lighting_participant(token: str, date_local: str) -> str:
+def _lighting_participant(token: str, date_local: str) -> tuple[str, bool]:
     subject = _resolve_subject(token)
     if not subject:
         raise LookupError("invalid participant link")
-    if subject["status"] != "running":
+    preparation_mode = subject["status"] in {"scheduled", "ready"} and bool(subject["preparation_started_at_utc"])
+    if subject["status"] != "running" and not preparation_mode:
         raise ValueError("实验尚未处于运行状态，当前不能上传 Lighting")
     try:
         exposure_day = date.fromisoformat(date_local)
     except ValueError as exc:
         raise ValueError("Lighting 暴露日期必须使用 YYYY-MM-DD") from exc
+    if preparation_mode:
+        if exposure_day != local_today():
+            raise ValueError("Lighting test upload date must be today")
+        return subject["participant_id"], True
     if exposure_day not in allowed_exposure_days("evening"):
         raise ValueError("Lighting 只允许上传当前目标实验日或上一实验日")
     assignment = form_assignment(subject, "evening", exposure_day)
     if not 1 <= assignment["study_day"] <= assignment["total_days"]:
         raise ValueError("所选实验日不在本次实验范围内")
-    return subject["participant_id"]
+    return subject["participant_id"], False
 
 
 def submit_lighting_path(token: str, date_local: str, filename: str, path: Path) -> dict:
-    participant_id = _lighting_participant(token, date_local)
-    return light_service.store_upload_path(participant_id, date_local, filename, path, "participant_portal")
+    participant_id, is_test = _lighting_participant(token, date_local)
+    return light_service.store_upload_path(participant_id, date_local, filename, path, "participant_portal", is_test=is_test)
 
 
 def prepare_lighting_direct(token: str, date_local: str, filename: str, size_bytes: int, sha256: str) -> dict:
-    participant_id = _lighting_participant(token, date_local)
-    return light_service.prepare_direct_upload(participant_id, date_local, filename, size_bytes, sha256)
+    participant_id, is_test = _lighting_participant(token, date_local)
+    return light_service.prepare_direct_upload(participant_id, date_local, filename, size_bytes, sha256, is_test=is_test)
 
 
 def complete_lighting_direct(token: str, upload_uid: str) -> dict:
     subject = _resolve_subject(token)
     if not subject:
         raise LookupError("invalid participant link")
-    if subject["status"] != "running":
+    if subject["status"] != "running" and not (subject["status"] in {"scheduled", "ready"} and subject["preparation_started_at_utc"]):
         raise ValueError("the completed study portal is read-only")
     return light_service.complete_direct_upload(subject["participant_id"], upload_uid)
 

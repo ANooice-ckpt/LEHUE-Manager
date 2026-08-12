@@ -84,6 +84,11 @@ CREATE TABLE IF NOT EXISTS study_subjects (
     notes TEXT NOT NULL DEFAULT '',
     awaiting_final_morning INTEGER NOT NULL DEFAULT 0,
     close_notes TEXT NOT NULL DEFAULT '',
+    preparation_started_at_utc TEXT NOT NULL DEFAULT '',
+    ready_at_utc TEXT NOT NULL DEFAULT '',
+    delivery_method TEXT NOT NULL DEFAULT '',
+    logistics_status TEXT NOT NULL DEFAULT '',
+    tracking_number TEXT NOT NULL DEFAULT '',
     portal_token_id TEXT NOT NULL DEFAULT '',
     portal_token_salt TEXT NOT NULL DEFAULT '',
     portal_token_hash TEXT NOT NULL DEFAULT '',
@@ -138,6 +143,7 @@ CREATE TABLE IF NOT EXISTS lighting_files (
     melanopic_max REAL,
     parse_error TEXT NOT NULL DEFAULT '',
     upload_status TEXT NOT NULL DEFAULT 'qc',
+    is_test INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY(participant_id) REFERENCES study_subjects(participant_id) ON DELETE CASCADE,
     UNIQUE(participant_id, date_local, sha256)
 );
@@ -203,12 +209,18 @@ SUBJECT_COLUMNS = {
     **PORTAL_COLUMNS,
     "awaiting_final_morning": "INTEGER NOT NULL DEFAULT 0",
     "close_notes": "TEXT NOT NULL DEFAULT ''",
+    "preparation_started_at_utc": "TEXT NOT NULL DEFAULT ''",
+    "ready_at_utc": "TEXT NOT NULL DEFAULT ''",
+    "delivery_method": "TEXT NOT NULL DEFAULT ''",
+    "logistics_status": "TEXT NOT NULL DEFAULT ''",
+    "tracking_number": "TEXT NOT NULL DEFAULT ''",
 }
 
 LIGHTING_COLUMNS = {
     "storage_backend": "TEXT NOT NULL DEFAULT 'local'",
     "object_key": "TEXT NOT NULL DEFAULT ''",
     "upload_status": "TEXT NOT NULL DEFAULT 'qc'",
+    "is_test": "INTEGER NOT NULL DEFAULT 0",
 }
 
 QUESTIONNAIRE_COLUMNS = {
@@ -296,6 +308,38 @@ def _normalize_subject_statuses(conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE study_subjects SET status='completed' WHERE status IN ('closed','finished')")
 
 
+def _normalize_device_statuses(conn: sqlite3.Connection) -> None:
+    conn.execute("UPDATE device_packs SET status='in_use' WHERE status='running'")
+
+
+def refresh_subject_ready(conn: sqlite3.Connection, participant_id: str, ready_at_utc: str) -> bool:
+    """Persist Ready once both real preparation uploads have reached the database."""
+    subject = conn.execute(
+        "SELECT status,preparation_started_at_utc FROM study_subjects WHERE participant_id=?",
+        (participant_id,),
+    ).fetchone()
+    if not subject or subject["status"] != "scheduled" or not subject["preparation_started_at_utc"]:
+        return False
+    prepared_at = subject["preparation_started_at_utc"]
+    gps_ok = conn.execute(
+        "SELECT 1 FROM gps_locations WHERE participant_id=? AND received_at_utc>=? LIMIT 1",
+        (participant_id, prepared_at),
+    ).fetchone()
+    lighting_ok = conn.execute(
+        """SELECT 1 FROM lighting_files
+           WHERE participant_id=? AND is_test=1 AND upload_status='qc' AND uploaded_at_utc>=?
+           LIMIT 1""",
+        (participant_id, prepared_at),
+    ).fetchone()
+    if not gps_ok or not lighting_ok:
+        return False
+    conn.execute(
+        "UPDATE study_subjects SET status='ready',ready_at_utc=?,updated_at_utc=? WHERE participant_id=? AND status='scheduled'",
+        (ready_at_utc, ready_at_utc, participant_id),
+    )
+    return True
+
+
 def init_db() -> None:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     settings.raw_archive_dir.mkdir(parents=True, exist_ok=True)
@@ -311,6 +355,7 @@ def init_db() -> None:
         _normalize_questionnaire_exposure_dates(conn)
         _normalize_incident_statuses(conn)
         _normalize_subject_statuses(conn)
+        _normalize_device_statuses(conn)
         conn.commit()
     finally:
         conn.close()

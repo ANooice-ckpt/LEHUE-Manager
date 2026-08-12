@@ -14,7 +14,7 @@ from statistics import median
 from typing import Any
 
 from app.core.config import settings
-from app.core.db import db
+from app.core.db import db, refresh_subject_ready
 from app.core.security import verify_secret
 
 _archive_lock = threading.Lock()
@@ -59,7 +59,8 @@ def authenticate_participant(participant_id: str, secret: str) -> bool:
         row = conn.execute(
             """SELECT p.secret_salt,p.secret_hash,p.is_active
                FROM participants p JOIN study_subjects s ON s.participant_id=p.participant_id
-               WHERE p.participant_id=? AND s.status='running'""",
+               WHERE p.participant_id=?
+                 AND (s.status='running' OR (s.status IN ('scheduled','ready') AND s.preparation_started_at_utc<>''))""",
             (participant_id,),
         ).fetchone()
     if not row or not row["is_active"]:
@@ -147,6 +148,7 @@ def ingest(
                         payload.get("tid"),
                     ),
                 )
+                refresh_subject_ready(conn, participant_id, iso_utc(received))
     except sqlite3.IntegrityError as exc:
         if "UNIQUE constraint failed: raw_events.participant_id, raw_events.event_uid" in str(exc):
             return {"stored": False, "duplicate": True, "event_uid": uid}

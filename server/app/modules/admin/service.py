@@ -67,7 +67,8 @@ def dashboard() -> dict[str, Any]:
         candidates = conn.execute("SELECT COUNT(*) n FROM candidates WHERE in_latest_snapshot=1 OR linked_participant_id IS NOT NULL").fetchone()["n"]
     with db() as conn:
         active = conn.execute("SELECT COUNT(*) n FROM study_subjects WHERE status='running'").fetchone()["n"]
-        scheduled = conn.execute("SELECT COUNT(*) n FROM study_subjects WHERE status='scheduled'").fetchone()["n"]
+        scheduled = conn.execute("SELECT COUNT(*) n FROM study_subjects WHERE status IN ('scheduled','ready')").fetchone()["n"]
+        ready = conn.execute("SELECT COUNT(*) n FROM study_subjects WHERE status='ready'").fetchone()["n"]
         open_incidents = conn.execute("SELECT COUNT(*) n FROM incidents WHERE status!='closed'").fetchone()["n"]
         available_packs = conn.execute("SELECT COUNT(*) n FROM device_packs WHERE status='available'").fetchone()["n"]
         gps_subjects = conn.execute("SELECT COUNT(DISTINCT participant_id) n FROM gps_locations").fetchone()["n"]
@@ -89,6 +90,7 @@ def dashboard() -> dict[str, Any]:
         "metrics": {
             "candidates": candidates,
             "scheduled": scheduled,
+            "ready": ready,
             "running": active,
             "open_incidents": open_incidents,
             "available_packs": available_packs,
@@ -160,7 +162,7 @@ def list_subjects():
     today = local_today()
     today_date = date.fromisoformat(today)
     with db() as conn:
-        rows = [dict(r) for r in conn.execute("SELECT * FROM study_subjects ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'scheduled' THEN 1 ELSE 2 END, participant_id")]
+        rows = [dict(r) for r in conn.execute("SELECT * FROM study_subjects ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'ready' THEN 1 WHEN 'scheduled' THEN 2 ELSE 3 END, participant_id")]
         counts = _questionnaire_counts(conn, [r["participant_id"] for r in rows])
         gps_last = {
             r["participant_id"]: r
@@ -190,6 +192,15 @@ def list_subjects():
                     pass
             row["questionnaire_today_completed"] = counts.get(row["participant_id"], 0)
             row["lighting_today"] = light_service.portal_light_state(row["participant_id"], today)
+            prepared_at = row.get("preparation_started_at_utc") or ""
+            row["gps_test_received"] = bool(prepared_at and conn.execute(
+                "SELECT 1 FROM gps_locations WHERE participant_id=? AND received_at_utc>=? LIMIT 1",
+                (row["participant_id"], prepared_at),
+            ).fetchone())
+            row["lighting_test_uploaded"] = bool(prepared_at and conn.execute(
+                "SELECT 1 FROM lighting_files WHERE participant_id=? AND is_test=1 AND upload_status='qc' AND uploaded_at_utc>=? LIMIT 1",
+                (row["participant_id"], prepared_at),
+            ).fetchone())
             row["portal_enabled"] = bool(row.get("portal_token_id"))
             for secret_field in ("portal_token_id", "portal_token_salt", "portal_token_hash", "portal_token_ciphertext", "portal_token_created_at_utc"):
                 row.pop(secret_field, None)
@@ -212,7 +223,7 @@ def update_subject(participant_id: str, data: dict[str, Any], operator: str):
         row = conn.execute("SELECT * FROM study_subjects WHERE participant_id=?", (participant_id,)).fetchone()
         if not row:
             raise ValueError("participant not found")
-        actual_period = row["status"] != "scheduled" or bool(row["start_date"])
+        actual_period = row["status"] in {"running", "completed"} or bool(row["start_date"])
         current_start = row["start_date"] if actual_period else row["expected_start"]
         current_end = row["end_date"] if actual_period else row["expected_end"]
         planned_start = str(data.get("planned_start", current_start) or "").strip()
@@ -264,7 +275,7 @@ def promote_candidate(candidate_uid: str, data: dict[str, Any], operator: str):
         conn.execute(
             """INSERT INTO study_subjects(participant_id,candidate_uid,status,batch_id,expected_start,expected_end,pack_id,assigned_ra,notes,created_at_utc,updated_at_utc)
             VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-            (sid,candidate_uid,"scheduled",str(data.get("batch_id") or ""),str(data.get("expected_start") or ""),str(data.get("expected_end") or ""),str(data.get("pack_id") or ""),str(data.get("assigned_ra") or ""),str(data.get("notes") or ""),now,now),
+            (sid,candidate_uid,"scheduled",str(data.get("batch_id") or ""),str(data.get("expected_start") or ""),str(data.get("expected_end") or ""),"",str(data.get("assigned_ra") or ""),str(data.get("notes") or ""),now,now),
         )
     with identity_db() as conn:
         conn.execute("UPDATE candidates SET linked_participant_id=?,updated_at_utc=? WHERE candidate_uid=?", (sid,now,candidate_uid))
@@ -339,7 +350,7 @@ def onboarding_card(participant_id: str, operator: str, origin: str) -> dict:
     config_json = json.dumps(config, ensure_ascii=False, separators=(",", ":"))
     device_text = " / ".join(filter(None, [subject["pack_id"], device["light_serial"] if device else "", device["ax3_serial"] if device else ""])) or "未登记"
     return {
-        **credentials, "status": subject["status"], "start_date": subject["start_date"], "end_date": subject["end_date"],
+        **credentials, "status": subject["status"], "start_date": subject["start_date"] or subject["expected_start"], "end_date": subject["end_date"] or subject["expected_end"],
         "pack_id": subject["pack_id"], "light_serial": device["light_serial"] if device else "", "ax3_serial": device["ax3_serial"] if device else "",
         "gps_url": endpoint, "portal_url": portal_url, "owntracks_config": config, "owntracks_config_json": config_json,
         "owntracks_uri": "owntracks:///config?inline=" + base64.b64encode(config_json.encode()).decode(),
@@ -354,6 +365,50 @@ def onboarding_card(participant_id: str, operator: str, origin: str) -> dict:
 def list_devices():
     with db() as conn:
         return [dict(r) for r in conn.execute("SELECT * FROM device_packs ORDER BY pack_id")]
+
+
+def prepare_subject(participant_id: str, data: dict[str, Any], operator: str, origin: str) -> dict:
+    pack = str(data.get("pack_id") or "").strip().upper()
+    if not pack:
+        raise ValueError("an available device pack is required")
+    now = now_iso()
+    with db() as conn:
+        subject = conn.execute("SELECT * FROM study_subjects WHERE participant_id=?", (participant_id,)).fetchone()
+        if not subject:
+            raise ValueError("participant not found")
+        if subject["status"] != "scheduled" or subject["preparation_started_at_utc"]:
+            raise ValueError("only an unprepared scheduled participant can enter preparation")
+        device = conn.execute("SELECT * FROM device_packs WHERE pack_id=?", (pack,)).fetchone()
+        if not device or device["status"] != "available" or device["current_participant_id"]:
+            raise ValueError("device pack is not available")
+        gps_secret = generate_secret()
+        gps_salt, gps_hash = hash_secret(gps_secret)
+        conn.execute(
+            "INSERT INTO participants(participant_id,secret_salt,secret_hash,secret_ciphertext,is_active,created_at_utc) VALUES(?,?,?,?,1,?) "
+            "ON CONFLICT(participant_id) DO UPDATE SET secret_salt=excluded.secret_salt,secret_hash=excluded.secret_hash,secret_ciphertext=excluded.secret_ciphertext,is_active=1",
+            (participant_id, gps_salt, gps_hash, encrypt_credential(gps_secret), now),
+        )
+        selector, portal_secret = secrets.token_hex(8), secrets.token_urlsafe(24)
+        portal_salt, portal_hash = hash_secret(portal_secret)
+        delivery_method = str(data.get("delivery_method") or "").strip()
+        tracking_number = str(data.get("tracking_number") or "").strip()
+        logistics_status = "outbound" if delivery_method else "in_use"
+        conn.execute(
+            """UPDATE study_subjects SET pack_id=?,preparation_started_at_utc=?,delivery_method=?,
+               logistics_status=?,tracking_number=?,portal_token_id=?,portal_token_salt=?,portal_token_hash=?,
+               portal_token_ciphertext=?,portal_token_created_at_utc=?,updated_at_utc=? WHERE participant_id=?""",
+            (pack, now, delivery_method, logistics_status, tracking_number, selector, portal_salt, portal_hash,
+             encrypt_credential(f"{selector}.{portal_secret}"), now, now, participant_id),
+        )
+        claimed = conn.execute(
+            """UPDATE device_packs SET status=?,current_participant_id=?,issued_date=?,expected_return_date=?,updated_at_utc=?
+               WHERE pack_id=? AND status='available' AND current_participant_id=''""",
+            (logistics_status, participant_id, local_today(), subject["expected_end"], now, pack),
+        )
+        if claimed.rowcount != 1:
+            raise ValueError("device pack is no longer available")
+    audit(operator, "participant.prepare", "participant", participant_id, {"pack_id": pack, "logistics_status": logistics_status})
+    return onboarding_card(participant_id, operator, origin)
 
 
 def upsert_device(data: dict[str, Any], operator: str):
@@ -377,11 +432,10 @@ def upsert_device(data: dict[str, Any], operator: str):
 
 
 def start_subject(participant_id: str, data: dict[str, Any], operator: str, origin: str):
-    pack = str(data.get("pack_id") or "").strip().upper()
     start = str(data.get("start_date") or "").strip()
     end = str(data.get("end_date") or "").strip()
-    if not pack or not start or not end:
-        raise ValueError("pack_id, start_date and end_date are required")
+    if not start or not end:
+        raise ValueError("start_date and end_date are required")
     try:
         start_day, end_day = date.fromisoformat(start), date.fromisoformat(end)
     except ValueError as exc:
@@ -392,12 +446,13 @@ def start_subject(participant_id: str, data: dict[str, Any], operator: str, orig
     with db() as conn:
         sub = conn.execute("SELECT * FROM study_subjects WHERE participant_id=?", (participant_id,)).fetchone()
         if not sub: raise ValueError("participant not found")
-        if sub["status"] != "scheduled":
-            raise ValueError("only a scheduled participant can be started")
+        if sub["status"] != "ready":
+            raise ValueError("participant is not Ready; GPS and Lighting tests must both succeed")
+        pack = sub["pack_id"]
         dev = conn.execute("SELECT * FROM device_packs WHERE pack_id=?", (pack,)).fetchone()
         if not dev: raise ValueError("device pack not found")
-        if dev["status"] != "available" or dev["current_participant_id"]:
-            raise ValueError("device pack is not available")
+        if dev["status"] not in {"outbound", "in_use"} or dev["current_participant_id"] != participant_id:
+            raise ValueError("prepared device pack is no longer assigned to this participant")
         holder = conn.execute("SELECT participant_id FROM study_subjects WHERE status='running' AND pack_id=? AND participant_id<>?", (pack,participant_id)).fetchone()
         if holder: raise ValueError(f"device pack is already used by {holder['participant_id']}")
         gps = conn.execute("SELECT secret_ciphertext FROM participants WHERE participant_id=?", (participant_id,)).fetchone()
@@ -417,14 +472,15 @@ def start_subject(participant_id: str, data: dict[str, Any], operator: str, orig
                 (selector, portal_salt, portal_hash, encrypt_credential(f"{selector}.{portal_secret}"), now, participant_id),
             )
         conn.execute("UPDATE study_subjects SET status='running',pack_id=?,start_date=?,end_date=?,updated_at_utc=? WHERE participant_id=?", (pack,start,end,now,participant_id))
-        conn.execute("UPDATE device_packs SET status='running',current_participant_id=?,issued_date=?,expected_return_date=?,updated_at_utc=? WHERE pack_id=?", (participant_id,start,end,now,pack))
+        conn.execute("UPDATE device_packs SET status='in_use',current_participant_id=?,issued_date=?,expected_return_date=?,updated_at_utc=? WHERE pack_id=?", (participant_id,start,end,now,pack))
+        conn.execute("UPDATE study_subjects SET logistics_status='in_use' WHERE participant_id=?", (participant_id,))
     audit(operator, "participant.start", "participant", participant_id, {"pack_id":pack,"start_date":start,"end_date":end})
     return onboarding_card(participant_id, operator, origin)
 
 
 def complete_subject(participant_id: str, operator: str) -> dict[str, Any]:
     now = now_iso()
-    returned = local_today()
+    final_end = local_today()
     with db() as conn:
         subject = conn.execute("SELECT * FROM study_subjects WHERE participant_id=?", (participant_id,)).fetchone()
         if not subject:
@@ -433,17 +489,38 @@ def complete_subject(participant_id: str, operator: str) -> dict[str, Any]:
             raise ValueError("only a running participant can be completed")
         conn.execute(
             "UPDATE study_subjects SET status='completed',final_end=?,updated_at_utc=? WHERE participant_id=?",
-            (returned, now, participant_id),
+            (final_end, now, participant_id),
         )
         if subject["pack_id"]:
             conn.execute(
-                """UPDATE device_packs SET status='available',current_participant_id='',returned_date=?,updated_at_utc=?
+                """UPDATE device_packs SET status='returning',updated_at_utc=?
                    WHERE pack_id=? AND current_participant_id=?""",
-                (returned, now, subject["pack_id"], participant_id),
+                (now, subject["pack_id"], participant_id),
             )
+            conn.execute("UPDATE study_subjects SET logistics_status='returning' WHERE participant_id=?", (participant_id,))
         conn.execute("UPDATE participants SET is_active=0 WHERE participant_id=?", (participant_id,))
-    audit(operator, "participant.complete", "participant", participant_id, {"pack_id": subject["pack_id"], "returned_date": returned})
-    return {"ok": True, "participant_id": participant_id, "status": "completed", "returned_date": returned}
+    audit(operator, "participant.complete", "participant", participant_id, {"pack_id": subject["pack_id"], "logistics_status": "returning"})
+    return {"ok": True, "participant_id": participant_id, "status": "completed", "logistics_status": "returning"}
+
+
+def update_device_flow(pack_id: str, action: str, operator: str) -> dict:
+    pack_id = pack_id.strip().upper()
+    now = now_iso()
+    with db() as conn:
+        device = conn.execute("SELECT * FROM device_packs WHERE pack_id=?", (pack_id,)).fetchone()
+        if not device:
+            raise ValueError("device pack not found")
+        if action == "confirm-returned" and device["status"] == "returning":
+            conn.execute("UPDATE device_packs SET status='returned',returned_date=?,updated_at_utc=? WHERE pack_id=?", (local_today(), now, pack_id))
+            conn.execute("UPDATE study_subjects SET logistics_status='returned',updated_at_utc=? WHERE participant_id=?", (now, device["current_participant_id"]))
+            status = "returned"
+        elif action == "make-available" and device["status"] == "returned":
+            conn.execute("UPDATE device_packs SET status='available',current_participant_id='',updated_at_utc=? WHERE pack_id=?", (now, pack_id))
+            status = "available"
+        else:
+            raise ValueError("invalid device logistics transition")
+    audit(operator, f"device.{action}", "device_pack", pack_id)
+    return {"ok": True, "pack_id": pack_id, "status": status}
 
 
 def list_incidents():

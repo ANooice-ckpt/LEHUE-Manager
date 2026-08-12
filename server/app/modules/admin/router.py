@@ -315,6 +315,16 @@ async def start_subject(participant_id: str, request: Request, operator=Depends(
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@router.post("/api/v1/web/subjects/{participant_id}/prepare")
+async def prepare_subject(participant_id: str, request: Request, operator=Depends(require_operator_write)):
+    try:
+        return service.prepare_subject(
+            participant_id, await request.json(), operator.username, str(request.base_url).rstrip("/")
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @router.get("/api/v1/web/devices")
 def devices(operator=Depends(require_operator)):
     return service.list_devices()
@@ -324,6 +334,14 @@ def devices(operator=Depends(require_operator)):
 async def device_upsert(request: Request, operator=Depends(require_operator_write)):
     try:
         return {"pack_id":service.upsert_device(await request.json(), operator.username)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/api/v1/web/devices/{pack_id}/flow")
+async def device_flow(pack_id: str, request: Request, operator=Depends(require_operator_write)):
+    try:
+        return service.update_device_flow(pack_id, str((await request.json()).get("action") or ""), operator.username)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

@@ -15,7 +15,7 @@ from xml.etree import ElementTree as ET
 from zoneinfo import ZoneInfo
 
 from app.core.config import settings
-from app.core.db import db
+from app.core.db import db, refresh_subject_ready
 from app.modules.gps import service as gps_service
 from app.modules.light.storage import get_light_storage
 
@@ -355,7 +355,7 @@ def _validate_upload(participant_id: str, date_local: str, filename: str, size_b
     return participant_id, date_local, filename, suffix
 
 
-def store_upload_path(participant_id: str, date_local: str, filename: str, source_path: Path, uploaded_by: str) -> dict:
+def store_upload_path(participant_id: str, date_local: str, filename: str, source_path: Path, uploaded_by: str, is_test: bool = False) -> dict:
     source_path = Path(source_path)
     size_bytes = source_path.stat().st_size
     participant_id, date_local, filename, suffix = _validate_upload(
@@ -368,6 +368,11 @@ def store_upload_path(participant_id: str, date_local: str, filename: str, sourc
             (participant_id, date_local, digest),
         ).fetchone()
     if existing:
+        if is_test and not existing["is_test"]:
+            with db() as conn:
+                conn.execute("UPDATE lighting_files SET is_test=1 WHERE upload_uid=?", (existing["upload_uid"],))
+                refresh_subject_ready(conn, participant_id, now_iso())
+                existing = conn.execute("SELECT * FROM lighting_files WHERE upload_uid=?", (existing["upload_uid"],)).fetchone()
         return _public_upload(existing, duplicate=True)
 
     upload_uid = f"light_{secrets.token_hex(10)}"
@@ -397,13 +402,17 @@ def store_upload_path(participant_id: str, date_local: str, filename: str, sourc
                 ),
             )
             row = conn.execute("SELECT * FROM lighting_files WHERE upload_uid=?", (upload_uid,)).fetchone()
+            if is_test:
+                conn.execute("UPDATE lighting_files SET is_test=1 WHERE upload_uid=?", (upload_uid,))
+                refresh_subject_ready(conn, participant_id, now_iso())
+                row = conn.execute("SELECT * FROM lighting_files WHERE upload_uid=?", (upload_uid,)).fetchone()
     except Exception:
         storage.delete(object_key)
         raise
     return _public_upload(row)
 
 
-def prepare_direct_upload(participant_id: str, date_local: str, filename: str, size_bytes: int, sha256: str) -> dict:
+def prepare_direct_upload(participant_id: str, date_local: str, filename: str, size_bytes: int, sha256: str, is_test: bool = False) -> dict:
     if settings.light_storage_backend != "oss":
         raise ValueError("Direct upload is available only with OSS storage")
     participant_id, date_local, filename, suffix = _validate_upload(
@@ -430,6 +439,8 @@ def prepare_direct_upload(participant_id: str, date_local: str, filename: str, s
             "SELECT * FROM lighting_files WHERE participant_id=? AND date_local=? AND sha256=?",
             (participant_id, date_local, digest),
         ).fetchone()
+        if is_test:
+            conn.execute("UPDATE lighting_files SET is_test=1 WHERE upload_uid=?", (row["upload_uid"],))
     if row["upload_status"] == "qc":
         result = _public_upload(row, duplicate=True)
         result["direct"] = True
@@ -475,6 +486,8 @@ def complete_direct_upload(participant_id: str, upload_uid: str) -> dict:
             "UPDATE lighting_files SET upload_status='uploaded',uploaded_at_utc=? WHERE upload_uid=?",
             (now_iso(), upload_uid),
         )
+        if row["is_test"]:
+            refresh_subject_ready(conn, participant_id, now_iso())
     return rerun_qc(upload_uid)
 
 
@@ -508,6 +521,8 @@ def rerun_qc(upload_uid: str) -> dict:
             ),
         )
         updated = conn.execute("SELECT * FROM lighting_files WHERE upload_uid=?", (upload_uid,)).fetchone()
+        if updated["is_test"]:
+            refresh_subject_ready(conn, updated["participant_id"], now_iso())
     return _public_upload(updated)
 
 

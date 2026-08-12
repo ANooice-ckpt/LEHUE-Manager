@@ -97,6 +97,11 @@ def test_web_admin_flow(monkeypatch):
             assert credentials2['portal_path'] == rotated_portal
             old_token = portal.json()['path'].removeprefix('/p/')
             assert client.get(f'/api/v1/portal/{old_token}').status_code == 404
+            # Readiness itself is covered end-to-end in test_experiment_readiness;
+            # this broader admin test continues from the formal-start boundary.
+            with dbmod.db() as conn:
+                conn.execute("UPDATE study_subjects SET status='ready',pack_id='D01' WHERE participant_id='001'")
+                conn.execute("UPDATE device_packs SET status='in_use',current_participant_id='001' WHERE pack_id='D01'")
             started = client.post('/api/v1/web/subjects/001/start', json={'pack_id':'D01','start_date':'2026-09-01','end_date':'2026-09-14'}, headers=h)
             assert started.status_code == 200
             card = started.json()
@@ -171,7 +176,7 @@ def test_web_admin_flow(monkeypatch):
                 returned_device = conn.execute("SELECT status,current_participant_id,returned_date FROM device_packs WHERE pack_id='D01'").fetchone()
                 credential = conn.execute("SELECT is_active FROM participants WHERE participant_id='001'").fetchone()
             assert completed_subject['status'] == 'completed'
-            assert returned_device['status'] == 'available' and returned_device['current_participant_id'] == '' and returned_device['returned_date']
+            assert returned_device['status'] == 'returning' and returned_device['current_participant_id'] == '001' and not returned_device['returned_date']
             assert credential['is_active'] == 0
             portal_token = rotated_portal.removeprefix('/p/')
             portal_state = client.get(f'/api/v1/portal/{portal_token}')
@@ -236,7 +241,7 @@ def test_public_first_setup_requires_server_cli(monkeypatch):
             assert denied.status_code == 403
 
 
-def test_start_creates_complete_onboarding_without_prior_credentials(monkeypatch):
+def test_ready_start_creates_complete_onboarding_without_prior_credentials(monkeypatch):
     with tempfile.TemporaryDirectory() as td:
         _, dbmod, _, _, _, main = _reload_stack(monkeypatch, td)
         from fastapi.testclient import TestClient
@@ -247,10 +252,10 @@ def test_start_creates_complete_onboarding_without_prior_credentials(monkeypatch
             headers = {'X-CSRF-Token': setup['csrf_token']}
             with dbmod.db() as conn:
                 conn.execute(
-                    "INSERT INTO study_subjects(participant_id,status,created_at_utc,updated_at_utc) VALUES('002','scheduled','now','now')"
+                    "INSERT INTO study_subjects(participant_id,status,pack_id,created_at_utc,updated_at_utc) VALUES('002','ready','D02','now','now')"
                 )
                 conn.execute(
-                    "INSERT INTO device_packs(pack_id,status,updated_at_utc) VALUES('D02','available','now')"
+                    "INSERT INTO device_packs(pack_id,status,current_participant_id,updated_at_utc) VALUES('D02','in_use','002','now')"
                 )
             response = client.post('/api/v1/web/subjects/002/start', json={
                 'pack_id': 'D02', 'start_date': '2026-09-01', 'end_date': '2026-09-14'
