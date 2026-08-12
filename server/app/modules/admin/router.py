@@ -271,8 +271,9 @@ def participant_portal(participant_id: str, operator=Depends(require_operator_wr
 @router.post("/api/v1/web/subjects/{participant_id}/start")
 async def start_subject(participant_id: str, request: Request, operator=Depends(require_operator_write)):
     try:
-        service.start_subject(participant_id, await request.json(), operator.username)
-        return {"ok":True}
+        return service.start_subject(
+            participant_id, await request.json(), operator.username, str(request.base_url).rstrip("/")
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -325,6 +326,16 @@ def lighting_rerun_qc(upload_uid: str, operator=Depends(require_operator_write))
 def participant_credentials(participant_id: str, operator=Depends(require_operator)):
     try:
         return service.reveal_credentials(participant_id, operator.username)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/api/v1/web/subjects/{participant_id}/onboarding")
+def participant_onboarding(participant_id: str, request: Request, operator=Depends(require_operator)):
+    try:
+        return service.onboarding_card(
+            participant_id, operator.username, str(request.base_url).rstrip("/")
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

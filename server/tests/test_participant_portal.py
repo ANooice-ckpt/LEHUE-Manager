@@ -85,6 +85,9 @@ def test_participant_portal_questionnaire_flow(monkeypatch):
             assert state.status_code == 200
             data = state.json()
             assert data["study_day"] == 2
+            assert data["study"]["pack_id"] == ""
+            assert data["study"]["start_date"] == yesterday
+            assert len(data["help"]) == 3
             assert data["status"] == "running"
             assert data["gps"]["status"] == "never"
             assert [x["key"] for x in data["forms"]] == ["morning", "evening", "evening"]

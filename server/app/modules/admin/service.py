@@ -315,6 +315,39 @@ def reveal_credentials(participant_id: str, operator: str) -> dict:
     }
 
 
+def onboarding_card(participant_id: str, operator: str, origin: str) -> dict:
+    credentials = reveal_credentials(participant_id, operator)
+    with db() as conn:
+        subject = conn.execute("SELECT * FROM study_subjects WHERE participant_id=?", (participant_id,)).fetchone()
+        if not subject:
+            raise ValueError("participant not found")
+        device = conn.execute("SELECT * FROM device_packs WHERE pack_id=?", (subject["pack_id"],)).fetchone()
+    configured_domain = settings.domain.strip().rstrip("/")
+    if configured_domain and configured_domain not in {"localhost", "127.0.0.1"}:
+        origin = f"https://{configured_domain}"
+    endpoint = f"{origin.rstrip('/')}/api/v1/gps/owntracks"
+    portal_url = f"{origin.rstrip('/')}{credentials['portal_path']}" if credentials["portal_path"] else ""
+    config = {
+        "_type": "configuration", "mode": 3, "auth": True,
+        "url": endpoint, "username": participant_id, "password": credentials["gps_password"],
+        "deviceId": participant_id, "tid": participant_id[-2:],
+        "locatorInterval": 10, "locatorDisplacement": 10, "adapt": 0, "downgrade": 0,
+    }
+    config_json = json.dumps(config, ensure_ascii=False, separators=(",", ":"))
+    device_text = " / ".join(filter(None, [subject["pack_id"], device["light_serial"] if device else "", device["ax3_serial"] if device else ""])) or "未登记"
+    return {
+        **credentials, "status": subject["status"], "start_date": subject["start_date"], "end_date": subject["end_date"],
+        "pack_id": subject["pack_id"], "light_serial": device["light_serial"] if device else "", "ax3_serial": device["ax3_serial"] if device else "",
+        "gps_url": endpoint, "portal_url": portal_url, "owntracks_config": config, "owntracks_config_json": config_json,
+        "owntracks_uri": "owntracks:///config?inline=" + base64.b64encode(config_json.encode()).decode(),
+        "contact_text": (
+            f"LEHUE 入组信息\n被试：{participant_id}\n实验日期：{subject['start_date']} 至 {subject['end_date']}\n设备：{device_text}\n"
+            f"被试入口：{portal_url}\n\nOwnTracks（HTTP / Move 模式）\n地址：{endpoint}\n用户名：{participant_id}\n"
+            f"密码：{credentials['gps_password']}\n目标间隔：10 秒。请允许始终定位和后台运行，完成配置后发送一次定位。"
+        ),
+    }
+
+
 def list_devices():
     with db() as conn:
         return [dict(r) for r in conn.execute("SELECT * FROM device_packs ORDER BY pack_id")]
@@ -335,7 +368,7 @@ def upsert_device(data: dict[str, Any], operator: str):
     return pack
 
 
-def start_subject(participant_id: str, data: dict[str, Any], operator: str):
+def start_subject(participant_id: str, data: dict[str, Any], operator: str, origin: str):
     pack = str(data.get("pack_id") or "").strip().upper()
     start = str(data.get("start_date") or "").strip()
     end = str(data.get("end_date") or "").strip()
@@ -351,9 +384,26 @@ def start_subject(participant_id: str, data: dict[str, Any], operator: str):
             raise ValueError("device pack is not available")
         holder = conn.execute("SELECT participant_id FROM study_subjects WHERE status='running' AND pack_id=? AND participant_id<>?", (pack,participant_id)).fetchone()
         if holder: raise ValueError(f"device pack is already used by {holder['participant_id']}")
+        gps = conn.execute("SELECT secret_ciphertext FROM participants WHERE participant_id=?", (participant_id,)).fetchone()
+        if not gps or not gps["secret_ciphertext"]:
+            gps_secret = generate_secret()
+            gps_salt, gps_hash = hash_secret(gps_secret)
+            conn.execute(
+                "INSERT INTO participants(participant_id,secret_salt,secret_hash,secret_ciphertext,is_active,created_at_utc) VALUES(?,?,?,?,1,?) "
+                "ON CONFLICT(participant_id) DO UPDATE SET secret_salt=excluded.secret_salt,secret_hash=excluded.secret_hash,secret_ciphertext=excluded.secret_ciphertext,is_active=1",
+                (participant_id, gps_salt, gps_hash, encrypt_credential(gps_secret), now),
+            )
+        if not sub["portal_token_ciphertext"]:
+            selector, portal_secret = secrets.token_hex(8), secrets.token_urlsafe(24)
+            portal_salt, portal_hash = hash_secret(portal_secret)
+            conn.execute(
+                "UPDATE study_subjects SET portal_token_id=?,portal_token_salt=?,portal_token_hash=?,portal_token_ciphertext=?,portal_token_created_at_utc=? WHERE participant_id=?",
+                (selector, portal_salt, portal_hash, encrypt_credential(f"{selector}.{portal_secret}"), now, participant_id),
+            )
         conn.execute("UPDATE study_subjects SET status='running',pack_id=?,start_date=?,end_date=?,updated_at_utc=? WHERE participant_id=?", (pack,start,end,now,participant_id))
         conn.execute("UPDATE device_packs SET status='running',current_participant_id=?,issued_date=?,expected_return_date=?,updated_at_utc=? WHERE pack_id=?", (participant_id,start,end,now,pack))
     audit(operator, "participant.start", "participant", participant_id, {"pack_id":pack,"start_date":start,"end_date":end})
+    return onboarding_card(participant_id, operator, origin)
 
 
 def list_incidents():

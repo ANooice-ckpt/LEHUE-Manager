@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Generate a non-persistent Onboarding Card when a study starts, including the
+  existing Portal/GPS credentials, study dates, devices, copyable fixed contact
+  text, and an official OwnTracks HTTP `.otrc`/inline configuration.
+- Add a lightweight participant “My Study / Help & Settings” view using existing
+  study, device, Study Day and GPS state, plus fixed operational tutorials.
+- Add copyable fixed-context contact text to onboarding, daily QC and incidents;
+  no messaging workflow or additional stored state is introduced.
 - Remove Lighting filename identity/date gates; Portal assignment is canonical
   and filenames are provenance only. Raw uploads now remain accepted when QC
   finds unreadable, insufficient, or clearly wrong-day content.

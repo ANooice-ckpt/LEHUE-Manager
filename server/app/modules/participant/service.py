@@ -329,6 +329,11 @@ def portal_state(token: str) -> dict:
         "experiment_date_local": active_assignment["experiment_date_local"],
         "study_day": active_assignment["study_day"],
         "total_days": active_assignment["total_days"],
+        "study": {
+            "start_date": subject["start_date"] or subject["expected_start"],
+            "end_date": subject["end_date"] or subject["expected_end"],
+            "pack_id": subject["pack_id"],
+        },
         "progress": progress,
         "cohort": cohort,
         "report": _report_state(subject, local_now.date()),
@@ -337,6 +342,11 @@ def portal_state(token: str) -> dict:
         "lighting_tasks": lighting_tasks,
         "forms": forms,
         "notice": "这是 LEHUE 被试专属工作入口。链接本身用于识别身份，请勿转发给他人。",
+        "help": [
+            {"title": "OwnTracks 没有回传", "text": "打开 OwnTracks，确认使用 Move 模式；允许始终定位、精确位置和后台运行，然后点一次上传/定位按钮。"},
+            {"title": "问卷跨过午夜", "text": "晨间问卷记录昨晚睡眠；睡前问卷和 Lighting 仍归入入睡前开始的实验日。Portal 已自动标注归属日期。"},
+            {"title": "Lighting 选错文件", "text": "直接重新上传正确的 CSV、XLSX 或 TXT。已收到的 raw 会保留，系统按实验日显示质量更好的结果。"},
+        ],
     }
 
 

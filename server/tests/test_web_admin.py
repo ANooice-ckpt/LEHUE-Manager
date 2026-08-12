@@ -95,7 +95,19 @@ def test_web_admin_flow(monkeypatch):
             assert credentials2['portal_path'] == rotated_portal
             old_token = portal.json()['path'].removeprefix('/p/')
             assert client.get(f'/api/v1/portal/{old_token}').status_code == 404
-            assert client.post('/api/v1/web/subjects/001/start', json={'pack_id':'D01','start_date':'2026-09-01','end_date':'2026-09-14'}, headers=h).status_code == 200
+            started = client.post('/api/v1/web/subjects/001/start', json={'pack_id':'D01','start_date':'2026-09-01','end_date':'2026-09-14'}, headers=h)
+            assert started.status_code == 200
+            card = started.json()
+            assert card['start_date'] == '2026-09-01' and card['pack_id'] == 'D01'
+            assert card['portal_url'].startswith('http://127.0.0.1:8085/p/')
+            assert card['owntracks_config']['mode'] == 3
+            assert card['owntracks_config']['url'] == 'http://127.0.0.1:8085/api/v1/gps/owntracks'
+            assert card['owntracks_config']['password'] == rotated_gps
+            assert card['owntracks_uri'].startswith('owntracks:///config?inline=')
+            inline = card['owntracks_uri'].split('inline=', 1)[1]
+            assert base64.b64decode(inline).decode() == card['owntracks_config_json']
+            assert 'LEHUE 入组信息' in card['contact_text']
+            assert client.get('/api/v1/web/subjects/001/onboarding').json()['owntracks_config'] == card['owntracks_config']
             edited_subject = client.post('/api/v1/web/subjects/001', json={'batch_id':'B2','assigned_ra':'ra01','planned_start':'2026-08-31','planned_end':'2026-09-15','notes':'late return'}, headers=h)
             assert edited_subject.status_code == 200
             subject = next(x for x in client.get('/api/v1/web/subjects').json() if x['participant_id'] == '001')
@@ -175,6 +187,34 @@ def test_public_first_setup_requires_server_cli(monkeypatch):
                 'username':'pi', 'password':'strong-password-01', 'setup_token':'wrong'
             })
             assert denied.status_code == 403
+
+
+def test_start_creates_complete_onboarding_without_prior_credentials(monkeypatch):
+    with tempfile.TemporaryDirectory() as td:
+        _, dbmod, _, _, _, main = _reload_stack(monkeypatch, td)
+        from fastapi.testclient import TestClient
+        with TestClient(main.app, base_url='http://127.0.0.1:8085') as client:
+            setup = client.post('/api/v1/web/setup', json={
+                'username': 'pi', 'password': 'strong-password-01'
+            }).json()
+            headers = {'X-CSRF-Token': setup['csrf_token']}
+            with dbmod.db() as conn:
+                conn.execute(
+                    "INSERT INTO study_subjects(participant_id,status,created_at_utc,updated_at_utc) VALUES('002','scheduled','now','now')"
+                )
+                conn.execute(
+                    "INSERT INTO device_packs(pack_id,status,updated_at_utc) VALUES('D02','available','now')"
+                )
+            response = client.post('/api/v1/web/subjects/002/start', json={
+                'pack_id': 'D02', 'start_date': '2026-09-01', 'end_date': '2026-09-14'
+            }, headers=headers)
+            assert response.status_code == 200
+            card = response.json()
+            assert card['gps_password']
+            assert card['portal_url'].startswith('http://127.0.0.1:8085/p/')
+            assert card['owntracks_config']['password'] == card['gps_password']
+            credentials = client.get('/api/v1/web/subjects/002/credentials').json()
+            assert credentials['gps_exists'] is True and credentials['portal_exists'] is True
 
 
 def test_credential_generation_runtime_failure_is_explicit(monkeypatch):

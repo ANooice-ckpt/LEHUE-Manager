@@ -137,6 +137,8 @@ OSS 模式下 Participant Portal 先登记 `pending` 并取得约 15 分钟有�
 
 统一使用 OwnTracks **Move** 模式，目标采样间隔约 10 秒：Android 设置 Move 10 s；iOS 设置 `locatorInterval=10`、`locatorDisplacement=10`、`adapt=0`、`downgrade=0`。这是目标设置，不要求数据严格每 10 秒一个点；OS 后台调度、卫星定位条件、网络中断和恢复补传都会改变实际间隔。
 
+Admin 点击“开始实验”后会直接显示 Onboarding Card，并即时生成基于该被试现有 credential 的 `.otrc` 文件和 `owntracks:///config` 链接；配置只在当前页面生成，不另存配置文件或版本。较新的 OwnTracks 默认禁用外部配置，需先在应用的高级/安全设置中允许 External Configuration，再打开链接或文件，并由用户确认导入。若手机不支持外部配置，卡片同时保留 HTTP URL、用户名和密码供手工填写。配置内容含 GPS 密码，只能交给对应被试，不要公开或转发。
+
 高频 HTTP 鉴权仍使用随机 GPS credential 和数据库中的 PBKDF2 hash。进程只短时缓存已验证的“被试 + 当前 hash + 密码指纹”，默认 300 秒；重置凭据会改变数据库 hash，因此旧缓存立即失效。运行状态在近期收到旧记录时显示“补传中”。Daily GPS QC 只看点数、自然日首末覆盖和明显长断档，不计算轨迹距离或行为指标；阈值可用 `.env.example` 中的 `GPS_DAILY_*` 调整。
 
 ## 定时异地备份
