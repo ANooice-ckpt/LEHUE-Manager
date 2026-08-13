@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response as FastAPIResponse
 from starlette.background import BackgroundTask
 
 from app.core import web_security
@@ -25,6 +25,7 @@ from app.core.web_security import (
 )
 from . import service
 from .backup import create_system_backup
+from app.core.owntracks import config_bytes, config_filename
 
 router = APIRouter()
 WEB_ROOT = Path(__file__).resolve().parents[2] / "web"
@@ -443,6 +444,19 @@ def participant_onboarding(participant_id: str, request: Request, operator=Depen
     try:
         return service.onboarding_card(
             participant_id, operator.username, str(request.base_url).rstrip("/")
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/api/v1/web/subjects/{participant_id}/owntracks/{platform}")
+def participant_owntracks_config(participant_id: str, platform: str, operator=Depends(require_operator)):
+    try:
+        config = service.owntracks_config(participant_id, platform, operator.username)
+        return FastAPIResponse(
+            content=config_bytes(participant_id, config["password"], platform),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{config_filename(participant_id, platform)}"'},
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

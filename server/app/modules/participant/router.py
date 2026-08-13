@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
+from app.core.owntracks import config_filename
 
 from app.modules.light import service as light_service
 from . import service
@@ -54,6 +56,21 @@ async def lighting_submit(portal_token: str, date_local: str, filename: str, req
     finally:
         if path is not None:
             path.unlink(missing_ok=True)
+
+
+@router.get("/api/v1/portal/{portal_token}/owntracks/{platform}")
+def participant_owntracks_config(portal_token: str, platform: str):
+    try:
+        participant_id, config = service.owntracks_download(portal_token, platform)
+        return Response(
+            content=json.dumps(config, ensure_ascii=False, indent=2).encode("utf-8"),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{config_filename(participant_id, platform)}"'},
+        )
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Invalid or expired participant link")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.post("/api/v1/portal/{portal_token}/lighting/direct")

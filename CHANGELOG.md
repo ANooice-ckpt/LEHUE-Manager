@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added dynamically generated iOS and Android OwnTracks `.otrc` downloads in Admin and Participant Portal. Both use the participant's current GPS credential and configured public domain without persisting plaintext configuration files; Portal highlights the S0-known phone platform and includes concise GPS/Lighting tutorials.
 - Added a minimal, mobile-friendly public academic landing page for the Light Exposure Histories in Urban Environments (LEHUE) study, with participant access guidance and Tsinghua research-team contact information.
 - Reduced public `/health` output to a status-only probe and removed the environment response header so public endpoints no longer disclose operational metadata.
 - Closeout is now two-step: end formal exposure, retain Portal access for the final morning/S2/makeup, then complete or force-close with a recorded reason.

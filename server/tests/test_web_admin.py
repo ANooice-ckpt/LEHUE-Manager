@@ -1,6 +1,7 @@
 import importlib
 import io
 import base64
+import json
 import shutil
 import tempfile
 import zipfile
@@ -138,6 +139,24 @@ def test_web_admin_flow(monkeypatch):
             assert credentials['portal_path'] == portal.json()['path']
             assert credentials['gps_exists'] is True
             assert credentials['portal_exists'] is True
+            ios_response = client.get('/api/v1/web/subjects/001/owntracks/ios')
+            android_response = client.get('/api/v1/web/subjects/001/owntracks/android')
+            assert ios_response.status_code == android_response.status_code == 200
+            ios_config, android_config = ios_response.json(), android_response.json()
+            expected_common = {
+                '_type': 'configuration', 'mode': 3, 'auth': True,
+                'url': 'http://127.0.0.1:8085/api/v1/gps/owntracks',
+                'username': '001', 'password': gps_password, 'deviceId': '001', 'tid': '01',
+                'monitoring': 2, 'locatorInterval': 10, 'locatorDisplacement': 100,
+                'ignoreInaccurateLocations': 0, 'ignoreStaleLocations': 0,
+                'extendedData': True, 'cmd': False, 'remoteConfiguration': False,
+            }
+            assert expected_common.items() <= ios_config.items()
+            assert expected_common.items() <= android_config.items()
+            assert ios_config['adapt'] == ios_config['downgrade'] == 0
+            assert android_config['moveModeLocatorInterval'] == 10
+            assert android_config['autostartOnBoot'] is True
+            assert 'LEHUE_001_iOS.otrc' in ios_response.headers['content-disposition']
             rotated_gps = client.post('/api/v1/web/subjects/001/gps-credential', json={}, headers=h).json()['password']
             rotated_portal = client.post('/api/v1/web/subjects/001/portal', json={}, headers=h).json()['path']
             assert rotated_gps != gps_password
@@ -145,6 +164,9 @@ def test_web_admin_flow(monkeypatch):
             credentials2 = client.get('/api/v1/web/subjects/001/credentials').json()
             assert credentials2['gps_password'] == rotated_gps
             assert credentials2['portal_path'] == rotated_portal
+            fresh_config = client.get('/api/v1/web/subjects/001/owntracks/ios').json()
+            assert fresh_config['password'] == rotated_gps
+            assert gps_password not in json.dumps(fresh_config)
             old_token = portal.json()['path'].removeprefix('/p/')
             assert client.get(f'/api/v1/portal/{old_token}').status_code == 404
             # Readiness itself is covered end-to-end in test_experiment_readiness;
@@ -165,7 +187,14 @@ def test_web_admin_flow(monkeypatch):
             assert base64.b64decode(inline).decode() == card['owntracks_config_json']
             assert 'LEHUE 入组信息' in card['contact_text']
             assert client.get('/api/v1/web/subjects/001/onboarding').json()['owntracks_config'] == card['owntracks_config']
-            assert client.get(f"/api/v1/portal/{rotated_portal.removeprefix('/p/')}").json()['owntracks']['available'] is True
+            portal_token = rotated_portal.removeprefix('/p/')
+            portal_state = client.get(f"/api/v1/portal/{portal_token}").json()
+            assert portal_state['owntracks']['available'] is True
+            assert portal_state['owntracks']['recommended_platform'] == 'android'
+            portal_ios = client.get(f'/api/v1/portal/{portal_token}/owntracks/ios')
+            portal_android = client.get(f'/api/v1/portal/{portal_token}/owntracks/android')
+            assert portal_ios.json()['password'] == portal_android.json()['password'] == rotated_gps
+            assert client.get('/api/v1/portal/not-a-valid-token/owntracks/ios').status_code == 404
             assert client.post('/api/v1/web/subjects/001/start', json={'pack_id':'D01','start_date':'2026-09-01','end_date':'2026-09-14'}, headers=h).status_code == 400
             assert client.post('/api/v1/web/subjects/001/start', json={'pack_id':'D01','start_date':'bad','end_date':'2026-09-14'}, headers=h).status_code == 400
             edited_subject = client.post('/api/v1/web/subjects/001', json={'batch_id':'B2','assigned_ra':'ra01','planned_start':'2026-09-01','planned_end':'2026-09-15','notes':'late return'}, headers=h)

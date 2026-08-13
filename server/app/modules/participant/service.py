@@ -10,7 +10,9 @@ from zoneinfo import ZoneInfo
 
 from app.core.config import settings
 from app.core.db import db, refresh_subject_ready
-from app.core.security import encrypt_credential, hash_secret, verify_secret
+from app.core.security import decrypt_credential, encrypt_credential, hash_secret, verify_secret
+from app.core.identity_db import identity_db
+from app.core.owntracks import build_config
 from app.modules.gps import service as gps_service
 from app.modules.light import service as light_service
 from app.modules.questionnaire import FORM_VERSION, get_form, list_forms, validate_answers
@@ -244,6 +246,34 @@ def _owntracks_config(subject) -> dict:
     }
 
 
+def owntracks_download(token: str, platform: str) -> tuple[str, dict]:
+    subject = _resolve_subject(token)
+    if not subject:
+        raise LookupError("invalid participant link")
+    with db() as conn:
+        credential = conn.execute(
+            "SELECT secret_ciphertext FROM participants WHERE participant_id=? AND is_active=1",
+            (subject["participant_id"],),
+        ).fetchone()
+    if not credential or not credential["secret_ciphertext"]:
+        raise ValueError("GPS 配置当前不可用，请联系研究工作人员")
+    password = decrypt_credential(credential["secret_ciphertext"])
+    return subject["participant_id"], build_config(subject["participant_id"], password, platform)
+
+
+def _recommended_phone_os(participant_id: str) -> str:
+    try:
+        with identity_db() as conn:
+            row = conn.execute(
+                "SELECT phone_os FROM candidates WHERE linked_participant_id=? ORDER BY updated_at_utc DESC LIMIT 1",
+                (participant_id,),
+            ).fetchone()
+    except sqlite3.Error:
+        row = None
+    value = str(row["phone_os"] or "").lower() if row else ""
+    return "ios" if "ios" in value or "iphone" in value else "android" if "android" in value else ""
+
+
 def portal_state(token: str) -> dict:
     subject = _resolve_subject(token)
     if not subject:
@@ -289,7 +319,7 @@ def portal_state(token: str) -> dict:
             "status": "running", "lifecycle_status": subject["status"], "mode": "preparation", "date_local": today,
             "calendar_date_local": today, "experiment_date_local": "", "study_day": 0, "total_days": 0,
             "study": {"start_date": subject["expected_start"], "end_date": subject["expected_end"], "pack_id": subject["pack_id"]},
-            "read_only": False, "owntracks": _owntracks_config(subject),
+            "read_only": False, "owntracks": {**_owntracks_config(subject), "recommended_platform": _recommended_phone_os(subject["participant_id"])},
             "progress": {"completed": completed_tests, "expected": 3, "percent": round(completed_tests / 3 * 100), "days": []},
             "readiness": {"s1_completed": bool(s1_response), "gps_test_received": gps_ok, "lighting_test_uploaded": light_ok, "ready": subject["status"] == "ready"},
             "gps": _gps_state(subject["participant_id"]), "lighting": light_state, "lighting_tasks": [light_state], "forms": [s1_task],
@@ -397,7 +427,7 @@ def portal_state(token: str) -> dict:
             "pack_id": subject["pack_id"],
         },
         "read_only": subject["status"] != "running",
-        "owntracks": _owntracks_config(subject),
+        "owntracks": {**_owntracks_config(subject), "recommended_platform": _recommended_phone_os(subject["participant_id"])},
         "progress": progress,
         "gps": _gps_state(subject["participant_id"]),
         "lighting": lighting,

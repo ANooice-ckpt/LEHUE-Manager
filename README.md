@@ -48,9 +48,11 @@ LEHUE-Manager/
 
 - 保留 v0.3.1 的 Web Admin、PI/RA 登录、非公开账号初始化、系统状态备份。
 - 每个正式被试可在 Admin 中生成一个不可猜测的专属工作入口；重置入口后旧链接立即失效。
+- Admin 配置卡与 Participant Portal 均可即时下载 iOS / Android 两份 OwnTracks `.otrc`；两份配置共用当前 participant GPS credential，不保存明文配置文件，凭据旋转后下载内容自动更新。Portal 按 S0 已知手机系统突出推荐版本，但始终保留两平台下载。
 - GPS 密码和工作入口可在被试列表中随时查看、复制或重置；服务器保留 hash 认证并额外保存加密副本。
 - 被试打开专属链接后无需填写姓名或被试号，服务器自动绑定 participant、研究日期与 Study Day。
 - Participant Portal 参考原 ANOLighting 的移动端单卡片/任务列表结构，接入正式晨间/睡前问卷、Lighting 上传和 GPS 回传状态。
+- Participant Portal 的帮助页提供精简 GPS 双平台设置教程与 Lighting 每日记录、佩戴、上传、充电和次日重启教程。
 - 问卷不再依赖问卷星/每日 CSV 下载；答案直接写入 `lehue.sqlite3` 的 `questionnaire_responses`。
 - 两份正式问卷由独立 `questionnaire/forms.py` 模块提供，均在一个移动端页面内完成，不建设复杂问卷设计器。
 - Admin 的被试表与 Dashboard 可看到当前两个任务问卷的完成数。

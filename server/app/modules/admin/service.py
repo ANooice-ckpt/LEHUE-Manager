@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.core.db import db
 from app.core.identity_db import identity_db
 from app.core.security import decrypt_credential, encrypt_credential, generate_secret, hash_secret
+from app.core.owntracks import build_config
 from app.modules.participant import service as participant_service
 from app.modules.gps import service as gps_service
 from app.modules.questionnaire import s0_import
@@ -393,6 +394,14 @@ def onboarding_card(participant_id: str, operator: str, origin: str) -> dict:
             f"密码：{credentials['gps_password']}\n目标间隔：10 秒。请允许始终定位和后台运行，完成配置后发送一次定位。"
         ),
     }
+
+
+def owntracks_config(participant_id: str, platform: str, operator: str) -> dict:
+    credentials = reveal_credentials(participant_id, operator)
+    password = credentials["gps_password"]
+    if not password:
+        raise ValueError("GPS credential is unavailable; rotate it before downloading configuration")
+    return build_config(participant_id, password, platform)
 
 
 def list_devices():
