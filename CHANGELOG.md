@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added a minimal, mobile-friendly public academic landing page for the Light Exposure Histories in Urban Environments (LEHUE) study, with participant access guidance and Tsinghua research-team contact information.
+- Reduced public `/health` output to a status-only probe and removed the environment response header so public endpoints no longer disclose operational metadata.
 - Closeout is now two-step: end formal exposure, retain Portal access for the final morning/S2/makeup, then complete or force-close with a recorded reason.
 - Added preparation cancellation and lawful early termination while preserving acquired data and device return facts.
 - Ready now requires completed S1, a real GPS return, and a parser-readable Lighting test with actual records.

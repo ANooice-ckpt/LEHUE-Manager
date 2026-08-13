@@ -65,13 +65,18 @@ def test_end_to_end(monkeypatch):
             r2 = client.post("/api/v1/gps/owntracks", json=payload, headers=headers)
             assert r2.status_code == 200
 
-            root = client.get("/").json()
-            assert root["project"] == "LEHUE"
-            assert root["study_timezone"] == "Asia/Shanghai"
+            root = client.get("/")
+            assert root.status_code == 200
+            assert "text/html" in root.headers["content-type"]
+            assert "光迹计划" in root.text
+            assert "Light Exposure Histories in Urban Environments" in root.text
+            assert "王宇骁" in root.text
+            assert 'href="/admin"' in root.text
+            assert "X-LEHUE-Environment" not in root.headers
+            assert client.get("/public.css").status_code == 200
 
             h = client.get("/health").json()
-            assert h["gps_location_count"] == 1
-            assert h["light_storage_backend"] == "local"
+            assert h == {"status": "ok"}
 
             admin_headers = {"Authorization": "Bearer admin-test-token"}
             status = client.get(
@@ -108,4 +113,4 @@ def test_health_database_error_returns_503(monkeypatch):
         with TestClient(main.app) as client:
             response = client.get("/health")
             assert response.status_code == 503
-            assert response.json()["database"] == "error"
+            assert response.json() == {"status": "error"}

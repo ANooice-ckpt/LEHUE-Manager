@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from app.core.config import settings
 from app.core.db import db, init_db
@@ -15,6 +16,9 @@ from app.modules.gps.router import router as gps_router
 from app.modules.admin.router import router as admin_router
 from app.modules.participant.router import router as participant_router
 from app.modules.light import service as light_service
+
+
+WEB_ROOT = Path(__file__).resolve().parent / "web"
 
 
 async def _scheduled_daily_qc() -> None:
@@ -64,7 +68,6 @@ async def security_headers(request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
-    response.headers["X-LEHUE-Environment"] = settings.runtime_env
     if (
         request.url.path.startswith("/admin")
         or request.url.path.startswith("/api/v1/web")
@@ -77,52 +80,19 @@ async def security_headers(request, call_next):
 
 @app.get("/")
 def root():
-    return {
-        "project": settings.project_name,
-        "service": "lehue-manager-backend",
-        "version": settings.app_version,
-        "runtime_environment": settings.runtime_env,
-        "implemented_modules": ["gps", "web_admin", "participant_portal", "questionnaire", "lighting", "acquisition_qc", "s0_import"],
-        "study_timezone": settings.study_timezone,
-        "reserved_modules": ["ax3"],
-    }
+    return FileResponse(WEB_ROOT / "public.html", media_type="text/html")
+
+
+@app.get("/public.css")
+def public_css():
+    return FileResponse(WEB_ROOT / "public.css", media_type="text/css")
 
 
 @app.get("/health")
 def health():
     try:
         with db() as conn:
-            count = conn.execute("SELECT COUNT(*) AS n FROM gps_locations").fetchone()["n"]
-            raw_count = conn.execute("SELECT COUNT(*) AS n FROM raw_events").fetchone()["n"]
-            questionnaire_count = conn.execute("SELECT COUNT(*) AS n FROM questionnaire_responses").fetchone()["n"]
-            lighting_count = conn.execute("SELECT COUNT(*) AS n FROM lighting_files").fetchone()["n"]
-            archive_failures = conn.execute(
-                "SELECT COUNT(*) AS n FROM raw_events WHERE archive_ok=0"
-            ).fetchone()["n"]
-            last = conn.execute(
-                "SELECT received_at_utc FROM raw_events ORDER BY id DESC LIMIT 1"
-            ).fetchone()
-        return {
-            "status": "ok" if archive_failures == 0 else "degraded",
-            "project": settings.project_name,
-            "version": settings.app_version,
-            "runtime_environment": settings.runtime_env,
-            "light_storage_backend": settings.light_storage_backend,
-            "database": "ok",
-            "gps_location_count": count,
-            "questionnaire_response_count": questionnaire_count,
-            "lighting_file_count": lighting_count,
-            "raw_event_count": raw_count,
-            "raw_archive_failures": archive_failures,
-            "last_event_received_at_utc": last["received_at_utc"] if last else None,
-        }
-    except sqlite3.Error as exc:
-        return JSONResponse(status_code=503, content={
-            "status": "error",
-            "project": settings.project_name,
-            "version": settings.app_version,
-            "runtime_environment": settings.runtime_env,
-            "light_storage_backend": settings.light_storage_backend,
-            "database": "error",
-            "detail": str(exc),
-        })
+            conn.execute("SELECT 1").fetchone()
+        return {"status": "ok"}
+    except sqlite3.Error:
+        return JSONResponse(status_code=503, content={"status": "error"})

@@ -13,6 +13,8 @@ LEHUE-Manager 是实验运营与采集状态基础设施。**科研分析不搬�
 2. Web Admin：PI/RA 登录 → 候选/被试/设备包/异常/账号管理 → GPS 与问卷状态汇入统一运营界面。
 3. Participant Portal：每个被试一个 `/p/<token>` 专属工作入口 → 自动识别身份与 Study Day → 完成每日问卷并查看 GPS 回传状态。
 
+公网根路径 `/` 是“光迹计划 / LEHUE”极简学术研究首页，介绍研究方向、参与者入口方式、清华大学建筑学院研究团队及主试联系方式。首页不提供被试编号查询或公共 Portal 登录，也不公开实验运营状态；参与者必须使用工作人员提供的专属二维码或链接。
+
 ## 当前结构
 
 ```text
@@ -87,7 +89,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 - `.env`、TEST/PROD 运行库、raw JSONL、GPS、问卷响应和真实联系方式均不得提交 Git；唯一例外是明确标记为纯模拟的 `server/test_seed/`。
 - `/p/<token>` 的 token 本身就是被试端身份凭据：不可猜测、数据库仅存 hash，但收到链接的人可以代表该被试访问工作入口，因此不要转发或公开。
 - 公网部署只暴露 Caddy 80/443；FastAPI 8000 不直接开放。
-- `/health` 不返回 participant ID、身份信息、坐标或问卷答案。
+- 公开 `/health` 只返回最小健康状态 `{"status":"ok"}`；不公开数据数量、存储方式、运行环境、版本或最后接收时间等运营元数据。
 - 当前仍是工程测试版本；正式被试前还需冻结登录/portal 限速策略，启用并验证定时异地备份，完成恢复演练及隐私流程。
 
 ## Lighting raw storage：本地与 OSS
