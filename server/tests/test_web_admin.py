@@ -20,6 +20,39 @@ def test_admin_field_ui_keeps_running_cards_groups_qc_and_defaults_ra():
     assert ".qc-date-group td" in style_css
 
 
+def test_subject_list_filters_keep_id_bound_actions_and_use_consolidated_flows():
+    web_dir = Path(__file__).parents[1] / "app" / "web"
+    app_js = (web_dir / "app.js").read_text(encoding="utf-8")
+    index_html = (web_dir / "index.html").read_text(encoding="utf-8")
+
+    assert '<option value="all" selected>全部状态</option>' in index_html
+    assert 'data-participant-id="${esc(x.participant_id)}"' in app_js
+    assert 'data-end-study="${esc(x.participant_id)}"' in app_js
+    assert "data-end-study" in app_js and "openEndStudy(b.dataset.endStudy)" in app_js
+    assert 'id="editReplaceDeviceBtn"' in index_html
+    assert 'id="endStudyType"' in index_html
+    assert '提前终止（被试退出等）' in index_html
+    final_renderer = app_js[app_js.rfind("renderSubjectRows=function()") :]
+    assert "data-complete" not in final_renderer
+    assert "terminateSubject" not in final_renderer
+
+
+def test_configuration_card_consolidates_credentials_and_running_progress():
+    web_dir = Path(__file__).parents[1] / "app" / "web"
+    app_js = (web_dir / "app.js").read_text(encoding="utf-8")
+    index_html = (web_dir / "index.html").read_text(encoding="utf-8")
+    style_css = (web_dir / "style.css").read_text(encoding="utf-8")
+
+    assert 'id="credentialDialog"' not in index_html
+    assert 'id="onboardingFacts"' not in index_html
+    assert 'id="credGpsRotate"' in index_html
+    assert 'id="credPortalRotate"' in index_html
+    assert "function studyProgress(subject)" in app_js
+    assert "subject.status!=='running'" in app_js
+    assert "row.cells[3].innerHTML=studyProgress(subject)" in app_js
+    assert ".study-progress-track" in style_css
+
+
 def _reload_stack(monkeypatch, td: str, domain: str = "localhost"):
     monkeypatch.setenv("DATA_DIR", td)
     monkeypatch.setenv("DATA_ROOT", td)
