@@ -50,7 +50,10 @@ def test_configuration_card_consolidates_credentials_and_running_progress():
     assert "function studyProgress(subject)" in app_js
     assert "subject.status!=='running'" in app_js
     assert "row.cells[3].innerHTML=studyProgress(subject)" in app_js
-    assert "const showConfiguration=x.status==='running'||" in app_js
+    final_renderer = app_js[app_js.rfind("const progressRenderSubjectRows") :]
+    assert "subject?.status!=='running'" in final_renderer
+    assert "actions.querySelector('[data-onboarding]')" in final_renderer
+    assert "button.textContent='配置卡'" in final_renderer
     assert ".study-progress-track" in style_css
 
 
