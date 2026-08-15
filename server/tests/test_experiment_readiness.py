@@ -63,7 +63,23 @@ def test_ready_start_and_device_return_flow(monkeypatch):
             assert gps.status_code == 200
 
             token = card["portal_url"].rsplit("/", 1)[1]
-            today = config.settings.study_timezone and client.get(f"/api/v1/portal/{token}").json()["date_local"]
+            preparation = client.get(f"/api/v1/portal/{token}").json()
+            today = config.settings.study_timezone and preparation["date_local"]
+            assert preparation["forms"] == []
+            assert preparation["progress"]["expected"] == 2
+            assert set(preparation["readiness"]) == {
+                "gps_test_received", "lighting_test_uploaded", "ready"
+            }
+
+            # Legacy TEST/PROD rows are deliberately left in place, but no active
+            # readiness or Portal path reads them.
+            with dbmod.db() as conn:
+                conn.execute(
+                    """INSERT INTO questionnaire_responses(
+                           participant_id,date_local,study_day,form_key,form_version,answers_json,submitted_at_utc
+                       ) VALUES(?,?,?,?,?,?,?)""",
+                    ("001", today, 0, "s1", "legacy", "{}", "2026-08-15T00:00:00Z"),
+                )
             unreadable = client.post(
                 f"/api/v1/portal/{token}/lighting?date_local={today}&filename=bad.csv",
                 content=b"not,a,lighting,file\n",
@@ -75,15 +91,6 @@ def test_ready_start_and_device_return_flow(monkeypatch):
                 content=b"Photopic Lux,Melanopic,Is Saturate\n100,80,No\n",
             )
             assert lighting.status_code == 200
-
-            s1 = client.post(
-                f"/api/v1/portal/{token}/questionnaires/s1",
-                json={"answers": {
-                    "birth_month": "1995-01", "height_cm": 170, "weight_kg": 65,
-                    "subjective_status": 5, "vision_correction": "none", "baseline_notes": "无",
-                }},
-            )
-            assert s1.status_code == 200
 
             subject = next(x for x in client.get("/api/v1/web/subjects").json() if x["participant_id"] == "001")
             assert subject["status"] == "ready"

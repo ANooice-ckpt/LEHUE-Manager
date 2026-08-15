@@ -33,21 +33,6 @@ DEVICE_STATUS_OPTIONS = [
 ]
 
 FORMS = {
-    "s1": {
-        "key": "s1",
-        "title": "S1 入组问卷",
-        "description": "正式开始前填写；被试编号由专属入口自动绑定。",
-        "questions": [
-            {"key": "birth_month", "type": "text", "label": "出生年月（YYYY-MM）", "required": True},
-            {"key": "height_cm", "type": "number", "label": "身高（厘米）", "min": 100, "max": 230, "required": True},
-            {"key": "weight_kg", "type": "number", "label": "体重（千克）", "min": 30, "max": 250, "required": True},
-            {"key": "subjective_status", "type": "scale", "label": "您认为自己目前在北京社会资源和社会位置中大致位于第几级？", "min": 1, "max": 10, "low": "1", "high": "10", "required": True},
-            {"key": "vision_correction", "type": "choice", "label": "日常白天主要使用哪种视力矫正方式？", "options": [
-                {"value": "none", "label": "不佩戴眼镜"}, {"value": "frames", "label": "普通框架眼镜"},
-                {"value": "contacts", "label": "隐形眼镜"}, {"value": "both", "label": "框架和隐形都会使用"}], "required": True},
-            {"key": "baseline_notes", "type": "text", "label": "其他可能影响受光、睡眠或日常活动的基线情况（没有请填“无”）", "required": True},
-        ],
-    },
     "morning": {
         "key": "morning",
         "title": "每日记录1-晨起后填写",

@@ -76,7 +76,6 @@ CREATE TABLE IF NOT EXISTS study_subjects (
     final_end TEXT NOT NULL DEFAULT '',
     pack_id TEXT NOT NULL DEFAULT '',
     assigned_ra TEXT NOT NULL DEFAULT '',
-    s1_status TEXT NOT NULL DEFAULT '',
     latest_data_status TEXT NOT NULL DEFAULT '',
     valid_days INTEGER NOT NULL DEFAULT 0,
     completion_type TEXT NOT NULL DEFAULT '',
@@ -337,9 +336,9 @@ def _normalize_device_statuses(conn: sqlite3.Connection) -> None:
 
 
 def refresh_subject_ready(conn: sqlite3.Connection, participant_id: str, ready_at_utc: str) -> bool:
-    """Persist Ready after S1 plus real, usable GPS and Lighting preparation returns."""
+    """Persist Ready after real GPS and parser-readable Lighting preparation returns."""
     subject = conn.execute(
-        "SELECT status,preparation_started_at_utc,s1_status FROM study_subjects WHERE participant_id=?",
+        "SELECT status,preparation_started_at_utc FROM study_subjects WHERE participant_id=?",
         (participant_id,),
     ).fetchone()
     if not subject or subject["status"] != "scheduled" or not subject["preparation_started_at_utc"]:
@@ -356,7 +355,7 @@ def refresh_subject_ready(conn: sqlite3.Connection, participant_id: str, ready_a
            LIMIT 1""",
         (participant_id, prepared_at),
     ).fetchone()
-    if subject["s1_status"] != "completed" or not gps_ok or not lighting_ok:
+    if not gps_ok or not lighting_ok:
         return False
     conn.execute(
         "UPDATE study_subjects SET status='ready',ready_at_utc=?,updated_at_utc=? WHERE participant_id=? AND status='scheduled'",

@@ -9,7 +9,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from app.core.config import settings
-from app.core.db import db, refresh_subject_ready
+from app.core.db import db
 from app.core.security import decrypt_credential, encrypt_credential, hash_secret, verify_secret
 from app.core.identity_db import identity_db
 from app.core.owntracks import build_config
@@ -300,19 +300,7 @@ def portal_state(token: str) -> dict:
             "time_scope": {"range": "准备测试", "explanation": "该文件仅用于验证 Lighting 实际上传链路，不计入正式 Study Day。"},
         })
         light_ok = bool(lighting_row and lighting_row["quality"] != "unreadable" and lighting_row["records_total"] > 0)
-        with db() as conn:
-            s1_response = conn.execute(
-                "SELECT submitted_at_utc FROM questionnaire_responses WHERE participant_id=? AND form_key='s1' LIMIT 1",
-                (subject["participant_id"],),
-            ).fetchone()
-        s1_form = get_form("s1")
-        s1_task = {
-            **s1_form, "version": FORM_VERSION, "task_id": "s1:onboarding", "is_makeup": False,
-            "calendar_date_local": today, "experiment_date_local": today, "date_local": today,
-            "study_day": 0, "total_days": 0, "time_scope": {"label": "正式开始前", "range": "入组阶段", "explanation": "完成后将自动计入 Ready。"},
-            "completed": bool(s1_response), "submitted_at_utc": s1_response["submitted_at_utc"] if s1_response else None,
-        }
-        completed_tests = int(gps_ok) + int(light_ok) + int(bool(s1_response))
+        completed_tests = int(gps_ok) + int(light_ok)
         return {
             "study_title": "光迹计划（北京）", "portal_title": "LEHUE Study",
             "participant_id": subject["participant_id"], "study_timezone": settings.study_timezone,
@@ -320,10 +308,10 @@ def portal_state(token: str) -> dict:
             "calendar_date_local": today, "experiment_date_local": "", "study_day": 0, "total_days": 0,
             "study": {"start_date": subject["expected_start"], "end_date": subject["expected_end"], "pack_id": subject["pack_id"]},
             "read_only": False, "owntracks": {**_owntracks_config(subject), "recommended_platform": _recommended_phone_os(subject["participant_id"])},
-            "progress": {"completed": completed_tests, "expected": 3, "percent": round(completed_tests / 3 * 100), "days": []},
-            "readiness": {"s1_completed": bool(s1_response), "gps_test_received": gps_ok, "lighting_test_uploaded": light_ok, "ready": subject["status"] == "ready"},
-            "gps": _gps_state(subject["participant_id"]), "lighting": light_state, "lighting_tasks": [light_state], "forms": [s1_task],
-            "notice": "当前为测试/教学模式。完成 S1、一次 GPS 实际回传和一次可解析的 Lighting 测试后，系统自动标记 Ready。",
+            "progress": {"completed": completed_tests, "expected": 2, "percent": round(completed_tests / 2 * 100), "days": []},
+            "readiness": {"gps_test_received": gps_ok, "lighting_test_uploaded": light_ok, "ready": subject["status"] == "ready"},
+            "gps": _gps_state(subject["participant_id"]), "lighting": light_state, "lighting_tasks": [light_state], "forms": [],
+            "notice": "当前为测试/教学模式。完成一次 GPS 实际回传和一次可解析的 Lighting 测试上传后，系统自动标记 Ready。Lighting 测试不要求全天时长或正式日覆盖量。",
             "help": [],
         }
     definitions = list_forms()
@@ -508,20 +496,14 @@ def submit_questionnaire(token: str, form_key: str, answers: dict, date_local: s
     subject = _resolve_subject(token)
     if not subject:
         raise LookupError("invalid participant link")
-    preparation_mode = subject["status"] in {"scheduled", "ready"} and bool(subject["preparation_started_at_utc"])
     closing_mode = subject["status"] == "running" and bool(subject["awaiting_final_morning"])
-    if subject["status"] != "running" and not preparation_mode:
+    if subject["status"] != "running":
         raise ValueError("当前不能提交问卷")
     form = get_form(form_key)
     if not form:
         raise LookupError("questionnaire not found")
     local_now = datetime.now(ZoneInfo(settings.study_timezone))
-    if form_key == "s1":
-        if not preparation_mode:
-            raise ValueError("S1 is available only during preparation")
-        exposure_day = local_now.date()
-        assignment = {"date_local": exposure_day.isoformat(), "calendar_date_local": exposure_day.isoformat(), "experiment_date_local": exposure_day.isoformat(), "study_day": 0, "total_days": 0}
-    elif form_key == "s2":
+    if form_key == "s2":
         if not closing_mode or not subject["final_end"]:
             raise ValueError("S2 is available only after formal exposure ends")
         exposure_day = date.fromisoformat(subject["final_end"])
@@ -558,9 +540,6 @@ def submit_questionnaire(token: str, form_key: str, answers: dict, date_local: s
                     submitted,
                 ),
             )
-            if form_key == "s1":
-                conn.execute("UPDATE study_subjects SET s1_status='completed',updated_at_utc=? WHERE participant_id=?", (submitted, subject["participant_id"]))
-                refresh_subject_ready(conn, subject["participant_id"], submitted)
     except sqlite3.IntegrityError as exc:
         raise ValueError("该实验日的这份问卷已经提交，无需重复填写") from exc
     return {"ok": True, "form_key": form_key, **assignment, "submitted_at_utc": submitted}

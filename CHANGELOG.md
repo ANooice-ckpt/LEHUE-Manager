@@ -7,7 +7,7 @@
 - Reduced public `/health` output to a status-only probe and removed the environment response header so public endpoints no longer disclose operational metadata.
 - Closeout is now two-step: end formal exposure, retain Portal access for the final morning/S2/makeup, then complete or force-close with a recorded reason.
 - Added preparation cancellation and lawful early termination while preserving acquired data and device return facts.
-- Ready now requires completed S1, a real GPS return, and a parser-readable Lighting test with actual records.
+- Removed the S1 onboarding questionnaire from LEHUE; it is completed externally in Wenjuanxing. Ready now requires only a real GPS return and a parser-readable Lighting test with actual records, with no formal-day duration or coverage threshold. Existing historical S1 response rows are ignored.
 - Device replacement now works in preparation, Ready, and active running phases; formal start no longer accepts a silent pack override.
 - Running `start_date` is locked in ordinary edits; end dates remain adjustable.
 - Participant Portal offers prior-day Lighting reupload when the best raw is insufficient, unreadable, or clearly short.

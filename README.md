@@ -1,6 +1,6 @@
 # LEHUE-Manager v0.5.5
 
-冻结前生命周期语义：准备阶段由 S1、真实 GPS 回传和可解析的 Lighting 测试共同自动触发 Ready；正式开始后 `start_date` 锁定。结束时先固定最后 exposure day 并进入 `awaiting_final_morning`，Portal 继续开放最终晨间、S2 与必要补传，完成后才正式 `completed`。设备始终按 `returning → returned → available` 的物理事实流转。Lighting 正式 raw 通过 Portal 直传私有 OSS；文件名仅作 provenance，归属以 Portal token 与明确任务为主。
+冻结前生命周期语义：准备阶段由真实 GPS 回传和可解析的 Lighting 测试共同自动触发 Ready；测试文件只验证上传与解析链路，不要求正式全天时长或覆盖量。入组问卷使用外部问卷星，不在 LEHUE Portal 填写。正式开始后 `start_date` 锁定。结束时先固定最后 exposure day 并进入 `awaiting_final_morning`，Portal 继续开放最终晨间、S2 与必要补传，完成后才正式 `completed`。设备始终按 `returning → returned → available` 的物理事实流转。Lighting 正式 raw 通过 Portal 直传私有 OSS；文件名仅作 provenance，归属以 Portal token 与明确任务为主。
 
 **LEHUE = Light Exposure Histories in Urban Environments**
 

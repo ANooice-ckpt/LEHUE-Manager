@@ -484,7 +484,7 @@ def cancel_preparation(participant_id: str, data: dict[str, Any], operator: str)
         pack_status = "returning" if sent else "available"
         conn.execute(
             """UPDATE study_subjects SET status='scheduled',pack_id='',preparation_started_at_utc='',ready_at_utc='',
-               s1_status='',delivery_method='',logistics_status=?,tracking_number='',portal_token_id='',portal_token_salt='',
+               delivery_method='',logistics_status=?,tracking_number='',portal_token_id='',portal_token_salt='',
                portal_token_hash='',portal_token_ciphertext='',portal_token_created_at_utc='',close_notes=?,updated_at_utc=?
                WHERE participant_id=?""",
             ("returning" if pack_status == "returning" else "cancelled", reason, now, participant_id),
