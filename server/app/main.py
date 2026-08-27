@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from app.core.config import settings
 from app.core.db import db, init_db
@@ -19,6 +19,8 @@ from app.modules.light import service as light_service
 
 
 WEB_ROOT = Path(__file__).resolve().parent / "web"
+ADMIN_APP_JS = WEB_ROOT / "app.js"
+ADMIN_TRACCAR_JS = WEB_ROOT / "admin_traccar.js"
 
 
 async def _scheduled_daily_qc() -> None:
@@ -57,6 +59,17 @@ app = FastAPI(
     redoc_url=None,
     lifespan=lifespan,
 )
+
+
+@app.get("/admin/app.js")
+def admin_js_bundle():
+    """Serve the existing admin client plus the additive Traccar onboarding controls."""
+    content = ADMIN_APP_JS.read_text(encoding="utf-8") + "\n" + ADMIN_TRACCAR_JS.read_text(encoding="utf-8")
+    return Response(content=content, media_type="application/javascript", headers={"Cache-Control": "no-store"})
+
+
+# Keep this route ahead of the admin router's original /admin/app.js route so the
+# additive Traccar controls are included without changing the existing admin client.
 app.include_router(gps_router)
 app.include_router(admin_router)
 app.include_router(participant_router)
