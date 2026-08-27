@@ -556,7 +556,7 @@ def start_subject(participant_id: str, data: dict[str, Any], operator: str, orig
         if not dev: raise ValueError("device pack not found")
         if dev["status"] not in {"outbound", "in_use"} or dev["current_participant_id"] != participant_id:
             raise ValueError("prepared device pack is no longer assigned to this participant")
-        holder = conn.execute("SELECT participant_id FROM study_subjects WHERE status='running' AND pack_id=? AND participant_id<>?", (pack,participant_id)).fetchone()
+        holder = conn.execute("SELECT participant_id FROM study_subjects WHERE status='running' AND awaiting_final_morning=0 AND pack_id=? AND participant_id<>?", (pack,participant_id)).fetchone()
         if holder: raise ValueError(f"device pack is already used by {holder['participant_id']}")
         gps = conn.execute("SELECT secret_ciphertext FROM participants WHERE participant_id=?", (participant_id,)).fetchone()
         if not gps or not gps["secret_ciphertext"]:
