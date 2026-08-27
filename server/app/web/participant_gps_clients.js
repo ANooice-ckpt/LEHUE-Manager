@@ -27,7 +27,7 @@
 
     const note = document.createElement('div');
     note.className = 'portal-note';
-    note.textContent = 'Android 可用。与 OwnTracks 使用同一个被试身份和 GPS 密码；一键写入 Highest、5 s、离线缓存、Wake lock，并关闭 Stop detection。';
+    note.textContent = 'Android 可用。与 OwnTracks 使用同一个被试身份和 GPS 密码；一键写入 High、5 s、离线缓存、Wake lock，并关闭 Stop detection。';
     block.appendChild(note);
 
     const downloads = document.createElement('div');
