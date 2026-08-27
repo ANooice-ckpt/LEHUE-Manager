@@ -5,7 +5,10 @@ from urllib.parse import urlencode
 from app.core.config import settings
 
 
-TRACCAR_ACCURACY = "highest"
+# Traccar SDK 1.0.8 treats HIGHEST as an unconstrained mode and forces the
+# effective interval to 0. HIGH uses the same Android high-accuracy provider /
+# priority while preserving the requested 5 s interval.
+TRACCAR_ACCURACY = "high"
 TRACCAR_DISTANCE_METERS = 0
 TRACCAR_INTERVAL_SECONDS = 5
 TRACCAR_HEARTBEAT_SECONDS = 0
