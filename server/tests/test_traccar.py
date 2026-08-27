@@ -145,3 +145,9 @@ def test_traccar_portal_config_matches_client_parameters(monkeypatch):
             addon = client.get("/participant-gps-clients.js")
             assert addon.status_code == 200
             assert "Traccar 一键配置" in addon.text
+
+            admin_bundle = client.get("/admin/app.js")
+            assert admin_bundle.status_code == 200
+            assert "traccarAndroidLaunch" in admin_bundle.text
+            assert "Android · Traccar 一键配置" in admin_bundle.text
+            assert "accuracy: 'high'" in admin_bundle.text
