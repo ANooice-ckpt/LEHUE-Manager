@@ -129,7 +129,7 @@ def test_traccar_portal_config_matches_client_parameters(monkeypatch):
             params = parse_qs(uri.query)
             assert params["url"] == ["https://study.lehue.cn/api/v1/gps/traccar"]
             assert params["id"] == ["TEST01.gps-secret"]
-            assert params["accuracy"] == ["highest"]
+            assert params["accuracy"] == ["high"]
             assert params["distance"] == ["0"]
             assert params["interval"] == ["5"]
             assert params["heartbeat"] == ["0"]
