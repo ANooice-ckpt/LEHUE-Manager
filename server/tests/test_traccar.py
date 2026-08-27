@@ -123,31 +123,57 @@ def test_traccar_portal_config_matches_client_parameters(monkeypatch):
             assert response.status_code == 200
             config = response.json()
             assert config["available"] is True
-            uri = urlparse(config["uri"])
-            assert uri.scheme == "org.traccar.client"
-            assert uri.netloc == "config"
-            params = parse_qs(uri.query)
-            assert params["url"] == ["https://study.lehue.cn/api/v1/gps/traccar"]
-            assert params["id"] == ["TEST01.gps-secret"]
-            assert params["accuracy"] == ["high"]
-            assert params["distance"] == ["0"]
-            assert params["interval"] == ["5"]
-            assert params["heartbeat"] == ["0"]
-            assert params["buffer"] == ["true"]
-            assert params["wakelock"] == ["true"]
-            assert params["stop_detection"] == ["false"]
-            assert params["prefer_platform_providers"] == ["false"]
-            assert config["uri"] == traccar_core.build_config_uri("TEST01", "gps-secret")
+
+            android_uri = config["platforms"]["android"]["uri"]
+            assert config["uri"] == android_uri
+            assert android_uri == traccar_core.build_config_uri("TEST01", "gps-secret", "android")
+            android = urlparse(android_uri)
+            assert android.scheme == "org.traccar.client"
+            assert android.netloc == "config"
+            android_params = parse_qs(android.query)
+            assert android_params["url"] == ["https://study.lehue.cn/api/v1/gps/traccar"]
+            assert android_params["id"] == ["TEST01.gps-secret"]
+            assert android_params["accuracy"] == ["high"]
+            assert android_params["distance"] == ["0"]
+            assert android_params["interval"] == ["5"]
+            assert android_params["heartbeat"] == ["0"]
+            assert android_params["buffer"] == ["true"]
+            assert android_params["wakelock"] == ["true"]
+            assert android_params["stop_detection"] == ["false"]
+            assert android_params["prefer_platform_providers"] == ["false"]
+            assert config["platforms"]["android"]["settings"]["interval_mode"] == "requested"
+
+            ios_uri = config["platforms"]["ios"]["uri"]
+            assert ios_uri == traccar_core.build_config_uri("TEST01", "gps-secret", "ios")
+            ios = urlparse(ios_uri)
+            assert ios.scheme == "org.traccar.client"
+            assert ios.netloc == "config"
+            ios_params = parse_qs(ios.query)
+            assert ios_params["url"] == ["https://study.lehue.cn/api/v1/gps/traccar"]
+            assert ios_params["id"] == ["TEST01.gps-secret"]
+            assert ios_params["accuracy"] == ["high"]
+            assert ios_params["distance"] == ["0"]
+            assert ios_params["interval"] == ["5"]
+            assert ios_params["heartbeat"] == ["0"]
+            assert ios_params["buffer"] == ["true"]
+            assert ios_params["stop_detection"] == ["false"]
+            assert "wakelock" not in ios_params
+            assert "prefer_platform_providers" not in ios_params
+            assert config["platforms"]["ios"]["settings"]["interval_mode"] == "os_managed"
 
             page = client.get(f"/p/{token}")
             assert page.status_code == 200
             assert '<script src="/participant-gps-clients.js"></script>' in page.text
             addon = client.get("/participant-gps-clients.js")
             assert addon.status_code == 200
-            assert "Traccar 一键配置" in addon.text
+            assert "Traccar 双平台配置" in addon.text
+            assert "iOS · Traccar 配置链接" in addon.text
+            assert "Android · Traccar 配置链接" in addon.text
 
             admin_bundle = client.get("/admin/app.js")
             assert admin_bundle.status_code == 200
-            assert "traccarAndroidLaunch" in admin_bundle.text
-            assert "Android · Traccar 一键配置" in admin_bundle.text
-            assert "accuracy: 'high'" in admin_bundle.text
+            assert "traccarIosUri" in admin_bundle.text
+            assert "traccarAndroidUri" in admin_bundle.text
+            assert "iOS 配置链接" in admin_bundle.text
+            assert "Android 配置链接" in admin_bundle.text
+            assert "复制链接" in admin_bundle.text
