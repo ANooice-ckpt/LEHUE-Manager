@@ -14,6 +14,7 @@ from app.core.identity_db import init_identity_db
 from app.core.test_seed import install_test_seed_if_empty
 from app.modules.gps.router import router as gps_router
 from app.modules.admin.router import router as admin_router
+from app.modules.admin.skip_preparation import router as skip_preparation_router
 from app.modules.participant.router import router as participant_router
 from app.modules.light import service as light_service
 
@@ -21,6 +22,7 @@ from app.modules.light import service as light_service
 WEB_ROOT = Path(__file__).resolve().parent / "web"
 ADMIN_APP_JS = WEB_ROOT / "app.js"
 ADMIN_TRACCAR_JS = WEB_ROOT / "admin_traccar.js"
+ADMIN_SKIP_PREPARATION_JS = WEB_ROOT / "admin_skip_preparation.js"
 
 
 async def _scheduled_daily_qc() -> None:
@@ -63,15 +65,19 @@ app = FastAPI(
 
 @app.get("/admin/app.js")
 def admin_js_bundle():
-    """Serve the existing admin client plus the additive Traccar onboarding controls."""
-    content = ADMIN_APP_JS.read_text(encoding="utf-8") + "\n" + ADMIN_TRACCAR_JS.read_text(encoding="utf-8")
+    """Serve the existing admin client plus small additive admin controls."""
+    content = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (ADMIN_APP_JS, ADMIN_TRACCAR_JS, ADMIN_SKIP_PREPARATION_JS)
+    )
     return Response(content=content, media_type="application/javascript", headers={"Cache-Control": "no-store"})
 
 
 # Keep this route ahead of the admin router's original /admin/app.js route so the
-# additive Traccar controls are included without changing the existing admin client.
+# additive admin controls are included without changing the existing large client.
 app.include_router(gps_router)
 app.include_router(admin_router)
+app.include_router(skip_preparation_router)
 app.include_router(participant_router)
 
 
