@@ -8,21 +8,44 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 from app.core.owntracks import config_filename
 
 from app.modules.light import service as light_service
-from . import service
+from . import service, traccar_config
 
 router = APIRouter()
-PORTAL_HTML = Path(__file__).resolve().parents[2] / "web" / "participant.html"
+WEB_ROOT = Path(__file__).resolve().parents[2] / "web"
+PORTAL_HTML = WEB_ROOT / "participant.html"
+PORTAL_GPS_CLIENTS_JS = WEB_ROOT / "participant_gps_clients.js"
+PORTAL_PAGE = PORTAL_HTML.read_text(encoding="utf-8").replace(
+    "</body>",
+    '<script src="/participant-gps-clients.js"></script>\n</body>',
+)
 
 
 @router.get("/p/{portal_token}", response_class=HTMLResponse)
 def participant_page(portal_token: str):
-    return FileResponse(PORTAL_HTML)
+    return HTMLResponse(PORTAL_PAGE)
+
+
+@router.get("/participant-gps-clients.js")
+def participant_gps_clients_js():
+    return FileResponse(
+        PORTAL_GPS_CLIENTS_JS,
+        media_type="application/javascript; charset=utf-8",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/api/v1/portal/{portal_token}")
 def participant_state(portal_token: str):
     try:
         return service.portal_state(portal_token)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Invalid or expired participant link")
+
+
+@router.get("/api/v1/portal/{portal_token}/traccar/config")
+def participant_traccar_config(portal_token: str):
+    try:
+        return traccar_config.config_for_portal(portal_token)
     except LookupError:
         raise HTTPException(status_code=404, detail="Invalid or expired participant link")
 

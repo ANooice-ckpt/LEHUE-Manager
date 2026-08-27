@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import parse_qs
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from app.core.security import require_admin
-from . import service
+from . import service, traccar_service
 
 router = APIRouter()
 security = HTTPBasic(auto_error=False)
@@ -41,6 +43,41 @@ async def owntracks_ingest(
 
     # OwnTracks HTTP endpoints accept an empty JSON command array.
     return []
+
+
+@router.post("/api/v1/gps/traccar", response_class=PlainTextResponse)
+async def traccar_ingest(request: Request):
+    content_type = request.headers.get("content-type", "").lower()
+    if not content_type.startswith("application/x-www-form-urlencoded"):
+        raise HTTPException(status_code=415, detail="Traccar form-urlencoded payload required.")
+
+    body = await request.body()
+    if len(body) > 16_384:
+        raise HTTPException(status_code=413, detail="Traccar payload too large.")
+    try:
+        parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True, strict_parsing=False)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid Traccar form payload: {exc}")
+    payload = {key: values[-1] if values else "" for key, values in parsed.items()}
+
+    tracker_id = str(payload.get("id") or "").strip()
+    try:
+        participant_id, secret = tracker_id.split(".", 1)
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid Traccar device credential.")
+    participant_id = participant_id.strip()
+    if not participant_id or not secret:
+        raise HTTPException(status_code=401, detail="Invalid Traccar device credential.")
+    if not service.authenticate_participant(participant_id, secret):
+        raise HTTPException(status_code=403, detail="Invalid participant credential.")
+
+    try:
+        traccar_service.ingest(participant_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    # Traccar treats any 2xx response as a successful delivery acknowledgement.
+    return PlainTextResponse("OK", status_code=200)
 
 
 @router.get("/api/v1/admin/gps/status/{participant_id}", dependencies=[Depends(require_admin)])
