@@ -13,10 +13,14 @@
   function buildTraccarUri() {
     const participantId = document.getElementById('credGpsUser')?.value.trim() || '';
     const secret = document.getElementById('credGpsPassword')?.value || '';
-    if (!participantId || !secret) return '';
+    const ownTracksUrl = document.getElementById('credGpsUrl')?.value.trim() || '';
+    if (!participantId || !secret || !ownTracksUrl) return '';
 
+    const traccarUrl = ownTracksUrl.endsWith('/owntracks')
+      ? ownTracksUrl.slice(0, -'/owntracks'.length) + '/traccar'
+      : `${window.location.origin}/api/v1/gps/traccar`;
     const params = new URLSearchParams({
-      url: `${window.location.origin}/api/v1/gps/traccar`,
+      url: traccarUrl,
       id: `${participantId}.${secret}`,
       ...TRACCAR_SETTINGS,
     });
