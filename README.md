@@ -57,10 +57,15 @@ LEHUE-Manager/
 - 两份正式问卷由独立 `questionnaire/forms.py` 模块提供，均在一个移动端页面内完成，不建设复杂问卷设计器。
 - Admin 的被试表与 Dashboard 可看到当前两个任务问卷的完成数。
 - 问卷、Lighting、GPS 和 Daily QC 统一以实验日 `d` 归属：睡前问卷与次日起床后填写的晨间问卷都保存为 `date_local=d`，真实提交时间继续保存在 `submitted_at_utc`；`calendar_date_local` 仅记录实际提交日历日。
-- Portal 只显示当前目标实验日，并在上一实验日确有缺失时增加明确的补填/补传入口，不提供任意历史日期输入。`QUESTIONNAIRE_EVENING_CUTOFF_HOUR` 只决定睡前问卷和 Lighting 当前默认目标日，不重新解释已经明确选择的实验日。
+- Portal 显示当前任务和上一目标日缺失任务，不提供任意历史日期输入。`QUESTIONNAIRE_EVENING_CUTOFF_HOUR` 只决定睡前问卷默认目标日。Lighting 全天指向前一天；已明确打开的问卷任务不会因跨午夜、补填或进入收尾阶段改变归属。
+- Lighting 每日统一按次晨流程：先将前一天原始数据保存到手机，再开启当天 20 小时 / 10 秒记录、断开蓝牙并佩戴，随后上传旧文件和填写晨间问卷。上传失败可稍后重试，不阻断新一天采集；睡前只填睡前问卷并按教学要求放置、充电。第 15 天只保存最后一份记录和完成问卷，不再启动新记录。
+- Lighting 仍以 **7200 条**为完整采样基准，至少 **6480 条未饱和有效记录（90%）**才达到样本门槛；显示百分比的四舍五入不改变门槛。测试文件、明确日期/文件名归属冲突及明显短时记录不计入正式完成进度。Acquisition QC 不替代本地 Scientific QC。
+- 同一被试的相同 Lighting raw 不得完成两个实验日；同日重试复用已有结果。已明确判为错日且记录起始日可核对的 raw 可在正确日重新提交，原错误记录保留且不计完成。正常跨午夜记录仍受支持。
+- 同一候选只能绑定一个 participant ID，旧页面再次赋号会返回已绑定编号。结束曝光前仍可延期；结束曝光后普通编辑锁定实验日期，保留备注、批次和负责 RA 的编辑，不会恢复 GPS 或设备占用。
+- 曝光结束后，最终晨间问卷在最终实验日次日开放，睡前问卷仍可补填。GPS 凭据在收尾期间接收实验期内缓存，结束时刻之后的新记录只确认收件而不入研究库，避免卡住手机上传队列；结题或重置凭据后旧凭据失效。
 - Daily QC 对同一个实验日直接核对 `evening[d] + morning[d] + lighting[d] + gps[d]`；前一实验日到 `QC_DAY_CLOSE_HOUR` 后才产生缺失提醒，补齐后下一次 QC 自动恢复。
 - 为容纳晚睡晚起，前一暴露日默认到本地 18:00 才关闭并判缺；两条边界可分别通过 `QUESTIONNAIRE_EVENING_CUTOFF_HOUR` 和 `QC_DAY_CLOSE_HOUR` 调整。
-- 旧数据库可原地升级：启动时自动增加必要字段，并把本系统旧语义中 `date_local=calendar_date_local` 的晨间记录迁回其前一实验日，不修改答案或真实提交时间。
+- 旧数据库可原地升级：仅在首次给旧问卷表增加 `calendar_date_local` 列时迁移旧晨间日期并同步 Study Day。已有该列的数据库不再按“两个日期相等”猜测或自动移动记录；历史可疑记录须保留并人工核对。
 - 系统状态备份自动包含问卷响应。
 
 ## 第一次 Windows 本地运行
@@ -85,6 +90,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 - `server/test_seed/` 是允许进入 Git 的纯模拟基线；新的或尚无记录的 TEST 环境会自动复制一次。
 - TEST 后续操作只修改被 Git 忽略的 `data/test`，因此多地 `git pull` 不会产生 SQLite 冲突。
 - PROD 只读写 `data/prod`，永远不会加载 `test_seed`；正式数据和 `.env` 始终被 Git 忽略。
+- OSS 启动前须声明不同的 `OSS_BUCKET_TEST` / `OSS_BUCKET_PROD`，系统按环境选桶，不读取旧 `OSS_BUCKET`。启用备份时同样声明不同的 `BACKUP_OSS_BUCKET_TEST` / `BACKUP_OSS_BUCKET_PROD`。
+- PROD 必须配置独立 `CREDENTIAL_ENCRYPTION_KEY_PROD` 和 `OSS_ROLE_NAME_PROD`；旧未分环境的密钥/AccessKey/角色配置只兼容 TEST。新建 PROD 用 `server_setup.sh prod` 生成独立密钥。已有 PROD 的原密钥必须原样迁到 `_PROD` 项，不能重新生成；若原密钥原本与 TEST 共用，须先通过停机 State Bundle 恢复为独立密钥。详见 [P0 升级说明](docs/08_PRE_FREEZE_P0.md)。
 
 ## 安全边界
 
@@ -122,7 +129,8 @@ server\.venv\Scripts\python.exe -m pytest server\tests -q
 ```powershell
 $env:LEHUE_ENV = "test"
 $env:LIGHT_STORAGE_BACKEND = "oss"
-$env:OSS_BUCKET = "<TEST bucket>"
+$env:OSS_BUCKET_TEST = "<TEST bucket>"
+$env:OSS_BUCKET_PROD = "<独立 PROD bucket>"
 $env:OSS_REGION = "cn-hongkong"
 $env:OSS_CREDENTIAL_MODE = "access_key"
 $env:OSS_ACCESS_KEY_ID = "<secret>"
@@ -149,15 +157,17 @@ Admin 点击“开始实验”后会直接显示 Onboarding Card，并即时生�
 
 ## 定时异地备份
 
-`server/scripts/backup_to_oss.py` 生成与 Admin 下载、TEST 跨机迁移相同的 State Bundle：两个 SQLite 一致副本、GPS raw、manifest 和 credential 元数据。Lighting canonical raw 已在 OSS，只记录 bucket/object key/SHA256/size 引用，不重复复制。对象键自动包含 `test` 或 `prod`，两套运行环境仍应使用不同 bucket 或至少不同 RAM 权限。
+`server/scripts/backup_to_oss.py` 生成与 Admin 下载、TEST 跨机迁移相同的 State Bundle：两个 SQLite 一致副本、GPS raw、manifest 和 credential 元数据。Lighting canonical raw 已在 OSS，只记录 bucket/object key/SHA256/size 引用，不重复复制。对象键自动包含 `test` 或 `prod`，两套运行环境使用不同 bucket 和对应 RAM 权限。
 
-配置 `BACKUP_OSS_BUCKET`、`BACKUP_OSS_PREFIX` 后，备份脚本使用同一个 RAM Role credential provider，可先手工验证：
+配置 `BACKUP_OSS_BUCKET_TEST` / `BACKUP_OSS_BUCKET_PROD`、`BACKUP_OSS_PREFIX` 后，备份脚本使用当前环境的 RAM Role credential provider，可先手工验证：
 
 ```bash
 LEHUE_ENV=test docker compose exec -T api python scripts/backup_to_oss.py
 ```
 
 再由服务器 cron 定期运行 `bash /opt/LEHUE-Manager/scripts/server_backup.sh`。备份桶必须私有，并定期做恢复演练。
+
+在线恢复已禁用（API 返回 409，页面仅保留下载）。恢复使用 `bash scripts/server_snapshot.sh test restore filename.zip` 或 `prod restore filename.zip`：先停止 API 并检查已停止，保留 rollback 后替换状态，成功才重启；失败保持停止。
 
 ## Admin GPS 轨迹诊断
 

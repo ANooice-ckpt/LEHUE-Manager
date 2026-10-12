@@ -47,7 +47,7 @@ def test_oss_presign_pins_actual_content_type_and_metadata():
 
 @pytest.mark.skipif(os.getenv("RUN_OSS_INTEGRATION") != "1", reason="real OSS integration is opt-in")
 def test_real_oss_round_trip(tmp_path):
-    storage = OSSLightStorage(os.environ["OSS_BUCKET"])
+    storage = OSSLightStorage(os.environ["OSS_BUCKET_TEST"])
     source = tmp_path / "source.csv"
     source.write_bytes(b"LEHUE OSS integration test\n")
     key = f"integration-test/lighting/{uuid.uuid4().hex}.csv"

@@ -30,19 +30,25 @@ set_env() {
   chmod 600 .env
 }
 
-ADMIN_TOKEN="$(existing_env ADMIN_TOKEN)"
+TOKEN_ENV="ADMIN_TOKEN_${ENVIRONMENT^^}"
+KEY_ENV="CREDENTIAL_ENCRYPTION_KEY_${ENVIRONMENT^^}"
+ADMIN_TOKEN="$(existing_env "$TOKEN_ENV")"
 if [[ -z "$ADMIN_TOKEN" || "$ADMIN_TOKEN" == CHANGE_ME* ]]; then
   ADMIN_TOKEN="$($python_bin -c 'import secrets; print(secrets.token_urlsafe(48))')"
-  set_env ADMIN_TOKEN "$ADMIN_TOKEN"
+  set_env "$TOKEN_ENV" "$ADMIN_TOKEN"
 fi
-CREDENTIAL_KEY="$(existing_env CREDENTIAL_ENCRYPTION_KEY)"
+CREDENTIAL_KEY="$(existing_env "$KEY_ENV")"
+if [[ "$ENVIRONMENT" == test && ( -z "$CREDENTIAL_KEY" || "$CREDENTIAL_KEY" == CHANGE_ME* ) ]]; then
+  CREDENTIAL_KEY="$(existing_env CREDENTIAL_ENCRYPTION_KEY)"
+  if [[ -n "$CREDENTIAL_KEY" && "$CREDENTIAL_KEY" != CHANGE_ME* ]]; then set_env "$KEY_ENV" "$CREDENTIAL_KEY"; fi
+fi
 if [[ -z "$CREDENTIAL_KEY" || "$CREDENTIAL_KEY" == CHANGE_ME* ]]; then
   if [[ "$DEPLOYMENT_STATE" == "upgrade" ]]; then
     echo '[FAIL] Existing data has no usable CREDENTIAL_ENCRYPTION_KEY. Restore the original key; generating a new key would make stored credentials unreadable.' >&2
     exit 1
   fi
   CREDENTIAL_KEY="$($python_bin -c 'import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())')"
-  set_env CREDENTIAL_ENCRYPTION_KEY "$CREDENTIAL_KEY"
+  set_env "$KEY_ENV" "$CREDENTIAL_KEY"
 fi
 
 export LEHUE_ENV="$ENVIRONMENT"
@@ -55,7 +61,7 @@ if ! printf '%s' "$CREDENTIAL_KEY" | docker run -i --rm --entrypoint python lehu
   fi
   echo '[INFO] Replacing the invalid first-deployment CREDENTIAL_ENCRYPTION_KEY.'
   CREDENTIAL_KEY="$($python_bin -c 'import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())')"
-  set_env CREDENTIAL_ENCRYPTION_KEY "$CREDENTIAL_KEY"
+  set_env "$KEY_ENV" "$CREDENTIAL_KEY"
 fi
 echo '[OK]   CREDENTIAL_ENCRYPTION_KEY is a valid Fernet key'
 

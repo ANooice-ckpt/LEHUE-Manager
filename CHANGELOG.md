@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Close three further pre-freeze P0 gaps: a Lighting raw file cannot complete two study days, a candidate cannot receive a second participant ID, and ordinary date edits cannot reopen ended exposure. Preserve same-day upload retries, clearly wrong-day raw evidence and correct-day resubmission, and extensions made before exposure ends.
+- Lock ended-exposure dates in Admin while retaining notes/RA edits; omit disabled dates from edit requests. Candidate binding constraints preserve historical conflicts for manual review instead of merging or deleting research records.
+- Fixed pre-freeze P0 failures: explicit questionnaire dates survive closeout and restart; final morning opens the next day and missing evening remains fillable. Legacy morning migration runs only when adding the missing calendar column.
+- Keep GPS credentials usable during closeout for recorded-in-period backlog (OwnTracks and Traccar); post-exposure points are acknowledged without storage, and final completion revokes access.
+- Keep the 7200-sample / 6480-valid-sample Lighting standard. Standardize every formal day on next-morning local save → new recording and Bluetooth disconnect → upload and morning questionnaire; Admin and Portal retain yesterday's upload target all day.
+- Reject explicit Lighting filename identity/date conflicts; exclude teaching files and known assignment errors from formal completion; choose a correct eligible reupload over a larger wrong-day file. Direct-upload duplicates return the existing QC result, and reopening an upload task clears the old selection.
+- Scope S0 sequence matching and snapshot retirement by questionnaire source ID; ambiguous or conflicting contacts roll back the whole import, including same-batch matches.
+- Bind OSS buckets and PROD credentials to the selected environment; require distinct TEST/PROD bucket declarations. See `docs/08_PRE_FREEZE_P0.md` before upgrading existing OSS/PROD configuration.
+- Disable online State Bundle restoration. The TEST/PROD restore script stops and checks the API before replacement, preserves rollback and restarts only after success.
+
 - Added dynamically generated iOS and Android OwnTracks `.otrc` downloads in Admin and Participant Portal. Both use the participant's current GPS credential and configured public domain without persisting plaintext configuration files; Portal highlights the S0-known phone platform and includes concise GPS/Lighting tutorials.
 - Added a minimal, mobile-friendly public academic landing page for the Light Exposure Histories in Urban Environments (LEHUE) study, with participant access guidance and Tsinghua research-team contact information.
 - Reduced public `/health` output to a status-only probe and removed the environment response header so public endpoints no longer disclose operational metadata.
@@ -9,9 +19,9 @@
 - Added preparation cancellation and lawful early termination while preserving acquired data and device return facts.
 - Removed the S1 onboarding questionnaire from LEHUE; it is completed externally in Wenjuanxing. Ready now requires only a real GPS return and a parser-readable Lighting test with actual records, with no formal-day duration or coverage threshold. Existing historical S1 response rows are ignored.
 - Device replacement now works in preparation, Ready, and active running phases; formal start no longer accepts a silent pack override.
-- Running `start_date` is locked in ordinary edits; end dates remain adjustable.
+- Running `start_date` is locked in ordinary edits; end dates remain adjustable until exposure ends, after which both dates are locked.
 - Participant Portal offers prior-day Lighting reupload when the best raw is insufficient, unreadable, or clearly short.
-- Admin Lighting follows the current evening exposure target date; charging remains a reminder without a false confirmation record.
+- Admin Lighting follows the previous-day morning upload target; charging remains a reminder without a false confirmation record.
 - Added a minimal candidate contact-log workflow and lightweight Ready-dialog polling.
 
 - Update S0 import and candidate controls to the August 12 recruitment form:
@@ -41,12 +51,10 @@
   study, device, Study Day and GPS state, plus fixed operational tutorials.
 - Add copyable fixed-context contact text to onboarding, daily QC and incidents;
   no messaging workflow or additional stored state is introduced.
-- Remove Lighting filename identity/date gates; Portal assignment is canonical
-  and filenames are provenance only. Raw uploads now remain accepted when QC
-  finds unreadable, insufficient, or clearly wrong-day content.
-- Reuse parsed Lighting record timestamps to warn participants and the existing
-  daily QC/incident flow only when an entire reliably dated file is clearly
-  unrelated to the assigned experiment day, while allowing midnight crossover.
+- Portal assignment remains canonical. Explicit project-format filename identity/date conflicts are rejected; generic filenames remain provenance. Unreadable, insufficient or clearly wrong-day content is retained as raw, with QC preventing it from counting as completed acquisition.
+- Reuse reliably parsed Lighting record dates to flag an incorrect starting day
+  or records extending beyond the following day, while allowing normal midnight
+  crossover. Preserve uncertain timestamps for existing QC/manual review.
 - Build and health-probe the current candidate API image before replacing a
   running ECS container; validate the configured Fernet key with Fernet itself.
 - Preserve existing PI accounts during upgrades and refuse to replace an

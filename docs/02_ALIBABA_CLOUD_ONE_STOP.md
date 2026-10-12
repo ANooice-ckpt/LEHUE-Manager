@@ -162,8 +162,10 @@ docker compose up -d --build
 ```dotenv
 LIGHT_STORAGE_BACKEND=oss
 OSS_CREDENTIAL_MODE=ecs_ram_role
-OSS_ROLE_NAME=lehue-test-ecs
-OSS_BUCKET=lehue-lighting-test
+OSS_ROLE_NAME_TEST=lehue-test-ecs
+OSS_ROLE_NAME_PROD=lehue-prod-ecs
+OSS_BUCKET_TEST=lehue-lighting-test
+OSS_BUCKET_PROD=lehue-lighting-prod
 OSS_REGION=cn-hongkong
 # ECS 做 QC 可用内网 endpoint；浏览器必须使用公网 endpoint。
 OSS_ENDPOINT=https://oss-cn-hongkong-internal.aliyuncs.com
@@ -177,7 +179,8 @@ Participant Portal 使用限定 object key、短时有效的签名 PUT URL。Lig
 配置独立私有备份桶（不要使用公开读写权限）：
 
 ```dotenv
-BACKUP_OSS_BUCKET=lehue-private-backup-test
+BACKUP_OSS_BUCKET_TEST=lehue-private-backup-test
+BACKUP_OSS_BUCKET_PROD=lehue-private-backup-prod
 BACKUP_OSS_PREFIX=lehue-backups
 ```
 

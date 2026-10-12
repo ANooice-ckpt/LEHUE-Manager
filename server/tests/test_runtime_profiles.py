@@ -119,6 +119,7 @@ def test_oss_settings_support_role_and_explicit_test_credentials():
     role_settings = config.Settings(
         light_storage_backend="oss",
         oss_bucket="lehue-test",
+        oss_bucket_test="lehue-test", oss_bucket_prod="lehue-prod",
         oss_region="cn-hongkong",
         oss_credential_mode="ecs_ram_role",
     )
@@ -126,6 +127,7 @@ def test_oss_settings_support_role_and_explicit_test_credentials():
     settings = config.Settings(
         light_storage_backend="oss",
         oss_bucket="lehue-test",
+        oss_bucket_test="lehue-test", oss_bucket_prod="lehue-prod",
         oss_region="cn-hongkong",
         oss_credential_mode="access_key",
         oss_access_key_id="test-key-id",

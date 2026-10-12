@@ -3,7 +3,6 @@ from __future__ import annotations
 import secrets
 import shutil
 import sqlite3
-import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
@@ -12,7 +11,6 @@ from starlette.background import BackgroundTask
 
 from app.core import web_security
 from app.core.config import settings
-from app.core.state_bundle import restore_state_bundle
 from app.modules.light import service as light_service
 from app.core.web_security import (
     authenticate_admin,
@@ -189,37 +187,10 @@ def download_backup(operator=Depends(require_pi)):
 
 @router.post("/api/v1/web/state-bundle/restore")
 async def upload_and_restore_state_bundle(request: Request, operator=Depends(require_pi_write)):
-    staging_root = settings.data_dir.parent
-    staging_root.mkdir(parents=True, exist_ok=True)
-    temporary = Path(tempfile.mkdtemp(prefix="lehue-state-upload-", dir=staging_root))
-    upload = temporary / "uploaded-state-bundle.zip"
-    try:
-        with upload.open("wb") as stream:
-            async for chunk in request.stream():
-                stream.write(chunk)
-        if upload.stat().st_size == 0:
-            raise ValueError("Uploaded State Bundle is empty")
-        rollback, manifest = restore_state_bundle(upload, settings.data_dir / "restore_backups")
-    except (ValueError, RuntimeError, OSError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    finally:
-        shutil.rmtree(temporary, ignore_errors=True)
-    try:
-        service.audit(
-            operator.username,
-            "system.state_bundle.restore",
-            detail={"rollback": str(rollback), "source_version": manifest.get("app_version")},
-        )
-    except sqlite3.Error:
-        # The state replacement succeeded; an audit write must not make the API
-        # report a false restore failure after the irreversible boundary.
-        pass
-    return {
-        "ok": True,
-        "rollback_state_bundle": str(rollback),
-        "source_version": manifest.get("app_version"),
-        "credentials_reencrypted": True,
-    }
+    raise HTTPException(
+        status_code=409,
+        detail="在线恢复已禁用，避免覆盖同时到达的数据。请在服务器使用 scripts/server_snapshot.sh <test|prod> restore <filename.zip>；脚本会先停止 API，保留 rollback 后恢复。",
+    )
 
 
 @router.get("/api/v1/web/dashboard")

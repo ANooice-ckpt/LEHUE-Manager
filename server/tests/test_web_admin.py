@@ -293,11 +293,10 @@ def test_web_admin_flow(monkeypatch):
                 '/api/v1/web/state-bundle/restore', content=backup.content,
                 headers={**h, 'Content-Type': 'application/zip'},
             )
-            assert restored.status_code == 200
-            assert restored.json()['credentials_reencrypted'] is True
-            assert Path(restored.json()['rollback_state_bundle']).exists()
+            assert restored.status_code == 409
+            assert 'server_snapshot.sh' in restored.json()['detail']
             with idb.identity_db() as conn:
-                assert conn.execute("SELECT name FROM candidates WHERE candidate_uid=?", (cuid,)).fetchone()['name'] == 'Edited'
+                assert conn.execute("SELECT name FROM candidates WHERE candidate_uid=?", (cuid,)).fetchone()['name'] == 'changed-after-bundle'
 
             client.post('/api/v1/web/logout', json={}, headers=h)
             r = client.post('/api/v1/web/login', json={'username':'ra01','password':ra_password})

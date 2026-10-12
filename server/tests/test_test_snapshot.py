@@ -77,7 +77,10 @@ def test_state_bundle_round_trip_rekeys_credentials_and_includes_gps(monkeypatch
 def test_state_bundle_rejects_cross_environment(monkeypatch, tmp_path):
     _, _, _, bundles, _ = _stack(monkeypatch, tmp_path)
     archive = bundles.create_state_bundle(tmp_path / "test.zip")
-    bundles.settings = replace(bundles.settings, runtime_env="prod")
+    bundles.settings = replace(bundles.settings, runtime_env="prod", credential_encryption_key=Fernet.generate_key().decode(),
+                               admin_token="prod-admin", oss_role_name="prod-role", light_storage_backend="oss",
+                               oss_credential_mode="ecs_ram_role", oss_region="cn-hongkong", oss_bucket="prod-private",
+                               oss_bucket_test="test-private", oss_bucket_prod="prod-private")
     with pytest.raises(ValueError, match="TEST and PROD state are isolated"):
         bundles.inspect_state_bundle(archive)
 
@@ -96,6 +99,7 @@ def test_state_bundle_rejects_local_lighting_when_target_uses_oss(monkeypatch, t
         assert json.loads(bundle_zip.read("manifest.json"))["contains_local_lighting_references"] is True
     bundles.settings = replace(
         bundles.settings, light_storage_backend="oss", oss_bucket="target-private",
+        oss_bucket_test="target-private", oss_bucket_prod="prod-private",
         oss_endpoint="https://oss-cn-shanghai.aliyuncs.com", oss_credential_mode="ecs_ram_role",
     )
     with pytest.raises(ValueError, match="local-only Lighting"):

@@ -72,7 +72,8 @@ def test_participant_portal_questionnaire_flow(monkeypatch):
             )
         dbmod.init_db()
         with dbmod.db() as conn:
-            assert conn.execute("SELECT date_local FROM questionnaire_responses").fetchone()["date_local"] == yesterday
+            # Equal dates in the modern schema are facts, not a legacy marker.
+            assert conn.execute("SELECT date_local FROM questionnaire_responses").fetchone()["date_local"] == today
             conn.execute("DELETE FROM questionnaire_responses")
 
         token = portal.generate_portal_token("001")
@@ -100,10 +101,10 @@ def test_participant_portal_questionnaire_flow(monkeypatch):
             assert morning_state["date_local"] == yesterday
             assert morning_state["study_day"] == 1
             assert next(x for x in data["forms"] if x["key"] == "evening" and x["is_makeup"])["date_local"] == yesterday
-            assert [x["date_local"] for x in data["lighting_tasks"]] == [today, yesterday]
+            assert [x["date_local"] for x in data["lighting_tasks"]] == [yesterday]
             assert data["participant_id"] == "001"
             assert data["study_timezone"] == "Asia/Shanghai"
-            assert data["progress"]["expected"] == 5
+            assert data["progress"]["expected"] == 4
             assert data["progress"]["completed"] == 0
             assert [x["study_day"] for x in data["progress"]["days"]] == [1, 2]
             assert "cohort" not in data and "report" not in data
@@ -168,7 +169,7 @@ def test_participant_portal_questionnaire_flow(monkeypatch):
                     "SELECT COUNT(*) n FROM lighting_files WHERE participant_id='001' AND date_local=?", (yesterday,)
                 ).fetchone()["n"] == 1
             state3 = client.get(f"/api/v1/portal/{token}").json()
-            assert yesterday in [x["date_local"] for x in state3["lighting_tasks"] if x["is_makeup"]]
+            assert yesterday in [x["date_local"] for x in state3["lighting_tasks"] if not x["is_makeup"]]
             # The deliberately short test file is kept as incomplete Lighting, so only both questionnaires count.
             assert state3["progress"]["completed"] == 2
 

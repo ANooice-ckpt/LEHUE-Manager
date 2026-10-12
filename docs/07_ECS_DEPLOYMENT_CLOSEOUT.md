@@ -70,14 +70,14 @@ bits are therefore not a deployment prerequisite on Windows-origin checkouts.
 Export:
 
 ```bash
-bash scripts/server_snapshot.sh export
+bash scripts/server_snapshot.sh test export
 ```
 
 Copy the ZIP from `server/data/snapshots/` between Windows TEST and ECS TEST,
 then restore with:
 
 ```bash
-bash scripts/server_snapshot.sh restore LEHUE_TEST_state_bundle_YYYYMMDD_HHMMSSZ.zip
+bash scripts/server_snapshot.sh test restore LEHUE_TEST_state_bundle_YYYYMMDD_HHMMSSZ.zip
 ```
 
 The State Bundle is also the format used by Admin downloads and timed OSS
@@ -95,12 +95,14 @@ Fernet key; `.env`, DOMAIN, RAM Role, bucket/endpoint configuration and
 is rejected when the target uses OSS, and a different canonical bucket is also
 rejected until the objects have been copied deliberately.
 
-Windows can use the same Python command directly (with `LEHUE_ENV=test`):
+Web restore is disabled. The script stops the API and verifies it is stopped before replacing state; failures keep it stopped. For PROD use `prod` explicitly with a PROD bundle. Stop any other direct database writers too.
+
+Windows can use the same Python command directly after stopping its API (with `LEHUE_ENV=test`):
 
 ```powershell
 Push-Location server
 .venv\Scripts\python.exe scripts\test_snapshot.py export data\snapshots\windows-test.zip
-.venv\Scripts\python.exe scripts\test_snapshot.py restore data\snapshots\ecs-test.zip
+.venv\Scripts\python.exe scripts\test_snapshot.py restore data\snapshots\ecs-test.zip --api-stopped
 Pop-Location
 ```
 

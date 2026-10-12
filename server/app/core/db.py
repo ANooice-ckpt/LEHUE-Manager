@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sqlite3
 from contextlib import contextmanager
 
@@ -226,6 +227,7 @@ PARTICIPANT_COLUMNS = {
 }
 
 SUBJECT_COLUMNS = {
+    "exposure_ended_at_utc": "TEXT NOT NULL DEFAULT ''",
     **PORTAL_COLUMNS,
     "awaiting_final_morning": "INTEGER NOT NULL DEFAULT 0",
     "close_notes": "TEXT NOT NULL DEFAULT ''",
@@ -283,6 +285,43 @@ def _ensure_subject_columns(conn: sqlite3.Connection) -> None:
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_subject_portal_token_id "
         "ON study_subjects(portal_token_id) WHERE portal_token_id <> ''"
     )
+    duplicates = conn.execute(
+        """SELECT candidate_uid,GROUP_CONCAT(participant_id, ', ') participant_ids
+           FROM (SELECT candidate_uid,participant_id FROM study_subjects
+                 WHERE candidate_uid IS NOT NULL AND candidate_uid<>''
+                 ORDER BY participant_id)
+           GROUP BY candidate_uid HAVING COUNT(*)>1"""
+    ).fetchall()
+    if duplicates:
+        conflicts = "; ".join(f"{row['candidate_uid']} -> {row['participant_ids']}" for row in duplicates)
+        logging.getLogger(__name__).warning(
+            "同一候选人已绑定多个被试 ID：%s。保留现有记录，请对照候选池与原始记录人工核对；"
+            "系统不会自动合并或删除，已阻止新增重复绑定。", conflicts,
+        )
+        # Preserve legacy duplicates without taking acquisition offline. These
+        # guards only reject new conflicts, so existing studies remain editable.
+        conn.execute(
+            """CREATE TRIGGER IF NOT EXISTS prevent_duplicate_subject_candidate_insert
+               BEFORE INSERT ON study_subjects
+               WHEN NEW.candidate_uid IS NOT NULL AND NEW.candidate_uid<>''
+                 AND EXISTS(SELECT 1 FROM study_subjects WHERE candidate_uid=NEW.candidate_uid)
+               BEGIN SELECT RAISE(ABORT, 'candidate already assigned to a study subject'); END"""
+        )
+        conn.execute(
+            """CREATE TRIGGER IF NOT EXISTS prevent_duplicate_subject_candidate_update
+               BEFORE UPDATE OF candidate_uid ON study_subjects
+               WHEN NEW.candidate_uid IS NOT OLD.candidate_uid
+                 AND NEW.candidate_uid IS NOT NULL AND NEW.candidate_uid<>''
+                 AND EXISTS(SELECT 1 FROM study_subjects WHERE candidate_uid=NEW.candidate_uid)
+               BEGIN SELECT RAISE(ABORT, 'candidate already assigned to a study subject'); END"""
+        )
+    else:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_subject_candidate_uid "
+            "ON study_subjects(candidate_uid) WHERE candidate_uid IS NOT NULL AND candidate_uid<>''"
+        )
+        conn.execute("DROP TRIGGER IF EXISTS prevent_duplicate_subject_candidate_insert")
+        conn.execute("DROP TRIGGER IF EXISTS prevent_duplicate_subject_candidate_update")
 
 
 def _ensure_participant_columns(conn: sqlite3.Connection) -> None:
@@ -306,20 +345,31 @@ def _ensure_questionnaire_columns(conn: sqlite3.Connection) -> None:
         if name not in existing:
             conn.execute(f"ALTER TABLE questionnaire_responses ADD COLUMN {name} {declaration}")
     conn.execute("UPDATE questionnaire_responses SET calendar_date_local=date_local WHERE calendar_date_local=''")
+    # Only the pre-calendar schema used the morning submission date as its key.
+    # Modern records cannot be identified as legacy merely by equal dates.
+    if "calendar_date_local" not in existing:
+        _normalize_questionnaire_exposure_dates(conn)
 
 
 def _normalize_questionnaire_exposure_dates(conn: sqlite3.Connection) -> None:
     legacy_rows = conn.execute(
         """SELECT id,participant_id,date(date_local,'-1 day') exposure_day
            FROM questionnaire_responses
-           WHERE form_key='morning' AND calendar_date_local=date_local"""
+           WHERE form_key='morning' AND calendar_date_local=date_local
+           ORDER BY date_local,id"""
     ).fetchall()
     for row in legacy_rows:
         if not conn.execute(
             "SELECT 1 FROM questionnaire_responses WHERE participant_id=? AND date_local=? AND form_key='morning' AND id<>?",
             (row["participant_id"], row["exposure_day"], row["id"]),
         ).fetchone():
-            conn.execute("UPDATE questionnaire_responses SET date_local=? WHERE id=?", (row["exposure_day"], row["id"]))
+            conn.execute(
+                """UPDATE questionnaire_responses SET date_local=?,
+                   study_day=COALESCE((SELECT CAST(julianday(?)-julianday(start_date) AS INTEGER)+1
+                     FROM study_subjects WHERE participant_id=questionnaire_responses.participant_id),study_day)
+                   WHERE id=?""",
+                (row["exposure_day"], row["exposure_day"], row["id"]),
+            )
 
 
 def _normalize_incident_statuses(conn: sqlite3.Connection) -> None:
@@ -376,7 +426,6 @@ def init_db() -> None:
         _ensure_subject_columns(conn)
         _ensure_lighting_columns(conn)
         _ensure_questionnaire_columns(conn)
-        _normalize_questionnaire_exposure_dates(conn)
         _normalize_incident_statuses(conn)
         _normalize_subject_statuses(conn)
         _normalize_device_statuses(conn)

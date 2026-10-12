@@ -79,6 +79,8 @@ def ingest(
 
     try:
         with db() as conn:
+            if not gps_service.accepts_recorded_time(conn, participant_id, recorded):
+                return {"stored": False, "duplicate": False, "ignored": "outside_exposure_period"}
             cur = conn.execute(
                 """
                 INSERT INTO raw_events(

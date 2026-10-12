@@ -128,20 +128,19 @@ def test_lighting_upload_and_daily_qc(monkeypatch):
         token = portal.generate_portal_token("001")
         from fastapi.testclient import TestClient
         with TestClient(main.app) as client:
-            filename = f"001_{today.strftime('%Y%m%d')}_LIGHT.csv"
-            url = f"/api/v1/portal/{token}/lighting?date_local={today.isoformat()}&filename={filename}"
+            filename = f"001_{yesterday.strftime('%Y%m%d')}_LIGHT.csv"
+            url = f"/api/v1/portal/{token}/lighting?date_local={yesterday.isoformat()}&filename={filename}"
             uploaded = client.post(url, content=raw, headers={"Content-Type": "application/octet-stream"})
             assert uploaded.status_code == 200
             assert uploaded.json()["quality"] == "valid"
             assert client.post(url, content=raw).json()["duplicate"] is True
             mismatch = client.post(
-                f"/api/v1/portal/{token}/lighting?date_local={today.isoformat()}&filename=002_{today.strftime('%Y%m%d')}_LIGHT.csv",
+                f"/api/v1/portal/{token}/lighting?date_local={yesterday.isoformat()}&filename=002_{yesterday.strftime('%Y%m%d')}_LIGHT.csv",
                 content=raw + b"\n",
             )
-            assert mismatch.status_code == 200
-            assert mismatch.json()["original_filename"].startswith("002_")
+            assert mismatch.status_code == 400
             unreadable = client.post(
-                f"/api/v1/portal/{token}/lighting?date_local={today.isoformat()}&filename=arbitrary-name.txt",
+                f"/api/v1/portal/{token}/lighting?date_local={yesterday.isoformat()}&filename=arbitrary-name.txt",
                 content=b"raw was received even though this is not parseable lighting data",
             )
             assert unreadable.status_code == 200
@@ -179,18 +178,20 @@ def test_lighting_upload_and_daily_qc(monkeypatch):
         assert wrong_day["parse_error"] == light.CONTENT_DATE_WARNING
         wrong_day_qc = light.run_daily_qc("tester")
         wrong_day_row = next(row for row in wrong_day_qc["rows"] if row["date_local"] == yesterday.isoformat())
-        assert any(issue["type"] == "wrong_day_light" for issue in wrong_day_row["issues"])
+        # A later wrong-day file must not replace the valid file already received.
+        assert not any(issue["type"] == "wrong_day_light" for issue in wrong_day_row["issues"])
         with dbmod.db() as conn:
             incident = conn.execute(
                 "SELECT status FROM incidents WHERE incident_uid=?",
                 (f"acq_001_{yesterday.isoformat()}_wrong_day_light",),
             ).fetchone()
-            assert incident["status"] == "open"
+            assert incident is None
 
 
 def test_oss_direct_upload_can_resume_and_finish_qc(monkeypatch):
     monkeypatch.setenv("LIGHT_STORAGE_BACKEND", "oss")
-    monkeypatch.setenv("OSS_BUCKET", "test-lighting")
+    monkeypatch.setenv("OSS_BUCKET_TEST", "test-lighting")
+    monkeypatch.setenv("OSS_BUCKET_PROD", "prod-lighting")
     monkeypatch.setenv("OSS_REGION", "cn-hongkong")
     monkeypatch.setenv("OSS_CREDENTIAL_MODE", "access_key")
     monkeypatch.setenv("OSS_ACCESS_KEY_ID", "test-id")
@@ -248,6 +249,9 @@ def test_oss_direct_upload_can_resume_and_finish_qc(monkeypatch):
         finished = light.complete_direct_upload("001", first["upload_uid"])
         assert finished["quality"] == "valid"
         assert finished["upload_status"] == "qc"
+        duplicate = light.prepare_direct_upload("001", today.isoformat(), "any-name.csv", len(raw), digest)
+        assert duplicate["duplicate"] and duplicate["status"] == "qc" and duplicate["uploaded"]
+        assert "upload_url" not in duplicate
         with dbmod.db() as conn:
             assert conn.execute(
                 "SELECT upload_status FROM lighting_files WHERE upload_uid=?", (first["upload_uid"],)
