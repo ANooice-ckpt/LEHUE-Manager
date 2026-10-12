@@ -74,6 +74,29 @@ _DATA_ROOT = Path(os.getenv("DATA_ROOT", os.getenv("DATA_DIR", "./data")))
 _DATA_DIR = _DATA_ROOT / _RUNTIME_ENV
 
 
+def _environment_value(name: str, *, legacy_test: bool = False) -> str:
+    test_value = os.getenv(f"{name}_TEST", "").strip()
+    if not test_value and legacy_test:
+        test_value = os.getenv(name, "").strip()
+    prod_value = os.getenv(f"{name}_PROD", "").strip()
+    if test_value and prod_value and test_value == prod_value:
+        raise RuntimeError(f"{name}_TEST and {name}_PROD must be different")
+    value = os.getenv(f"{name}_{_RUNTIME_ENV.upper()}", "").strip()
+    if not value and legacy_test and _RUNTIME_ENV == "test":
+        value = os.getenv(name, "").strip()
+    return value
+
+
+def _isolated_bucket(name: str) -> str:
+    test = os.getenv(f"{name}_TEST", "").strip()
+    prod = os.getenv(f"{name}_PROD", "").strip()
+    if test and prod and test == prod:
+        raise RuntimeError(f"{name}_TEST and {name}_PROD must be different")
+    if name == "BACKUP_OSS_BUCKET" and (test or prod) and not (test and prod):
+        raise RuntimeError("Declare both BACKUP_OSS_BUCKET_TEST and BACKUP_OSS_BUCKET_PROD when enabling OSS backups")
+    return _environment_value(name)
+
+
 def _light_storage_backend() -> str:
     value = os.getenv("LIGHT_STORAGE_BACKEND", "oss" if _RUNTIME_ENV == "prod" else "local").strip().lower()
     if value not in {"local", "oss"}:
@@ -102,24 +125,26 @@ class Settings:
     # Compatibility secret for the legacy /api/v1/admin endpoints. New
     # deployments use Web Admin sessions; setup scripts persist this value so
     # operators never have to create or manage it themselves.
-    admin_token: str = os.getenv("ADMIN_TOKEN", "").strip() or secrets.token_urlsafe(48)
-    credential_encryption_key: str = os.getenv("CREDENTIAL_ENCRYPTION_KEY", "")
+    admin_token: str = _environment_value("ADMIN_TOKEN", legacy_test=True) or secrets.token_urlsafe(48)
+    credential_encryption_key: str = _environment_value("CREDENTIAL_ENCRYPTION_KEY", legacy_test=True)
     data_dir: Path = _DATA_DIR
     db_path: Path = _DATA_DIR / "lehue.sqlite3"
     identity_db_path: Path = _DATA_DIR / "lehue_identity.sqlite3"
     raw_archive_dir: Path = _DATA_DIR / "raw" / "gps"
     raw_light_dir: Path = _DATA_DIR / "raw" / "lighting"
     light_storage_backend: str = _light_storage_backend()
-    oss_bucket: str = os.getenv("OSS_BUCKET", "").strip()
+    oss_bucket: str = _isolated_bucket("OSS_BUCKET")
+    oss_bucket_test: str = os.getenv("OSS_BUCKET_TEST", "").strip()
+    oss_bucket_prod: str = os.getenv("OSS_BUCKET_PROD", "").strip()
     oss_region: str = os.getenv("OSS_REGION", "").strip()
     oss_endpoint: str = os.getenv("OSS_ENDPOINT", "").strip()
     oss_public_endpoint: str = os.getenv("OSS_PUBLIC_ENDPOINT", "").strip()
     oss_credential_mode: str = _oss_credential_mode()
-    oss_role_name: str = os.getenv("OSS_ROLE_NAME", "").strip()
-    oss_access_key_id: str = os.getenv("OSS_ACCESS_KEY_ID", "").strip()
-    oss_access_key_secret: str = os.getenv("OSS_ACCESS_KEY_SECRET", "").strip()
+    oss_role_name: str = _environment_value("OSS_ROLE_NAME", legacy_test=True)
+    oss_access_key_id: str = _environment_value("OSS_ACCESS_KEY_ID", legacy_test=True)
+    oss_access_key_secret: str = _environment_value("OSS_ACCESS_KEY_SECRET", legacy_test=True)
     oss_upload_url_seconds: int = _int("OSS_UPLOAD_URL_SECONDS", 900)
-    backup_oss_bucket: str = os.getenv("BACKUP_OSS_BUCKET", "").strip()
+    backup_oss_bucket: str = _isolated_bucket("BACKUP_OSS_BUCKET")
     backup_oss_prefix: str = os.getenv("BACKUP_OSS_PREFIX", "lehue-backups").strip().strip("/")
     load_test_seed: bool = _bool("LOAD_TEST_SEED", True)
     light_upload_max_bytes: int = _int("LIGHT_UPLOAD_MAX_BYTES", 64 * 1024 * 1024)
@@ -143,6 +168,18 @@ class Settings:
     ).strip()
 
     def __post_init__(self) -> None:
+        if self.runtime_env == "prod":
+            if self.light_storage_backend != "oss" or self.oss_credential_mode != "ecs_ram_role":
+                raise RuntimeError("PROD requires OSS storage with an ECS RAM role")
+            test_key = os.getenv("CREDENTIAL_ENCRYPTION_KEY_TEST", "").strip() or os.getenv("CREDENTIAL_ENCRYPTION_KEY", "").strip()
+            if self.credential_encryption_key and self.credential_encryption_key == test_key:
+                raise RuntimeError("PROD credential encryption key must differ from TEST")
+            test_role = os.getenv("OSS_ROLE_NAME_TEST", "").strip() or os.getenv("OSS_ROLE_NAME", "").strip()
+            if not self.oss_role_name or self.oss_role_name == test_role:
+                raise RuntimeError("PROD requires a separate OSS_ROLE_NAME_PROD with a PROD-only RAM policy")
+            test_admin = os.getenv("ADMIN_TOKEN_TEST", "").strip() or os.getenv("ADMIN_TOKEN", "").strip()
+            if self.admin_token == test_admin:
+                raise RuntimeError("PROD ADMIN_TOKEN must differ from TEST")
         key = self.credential_encryption_key.strip()
         if not key or key.startswith("CHANGE_ME"):
             raise RuntimeError("CREDENTIAL_ENCRYPTION_KEY is required; run the platform setup script")
@@ -153,7 +190,15 @@ class Settings:
         if self.light_storage_backend != "oss":
             return
         if not self.oss_bucket or not (self.oss_region or self.oss_endpoint):
-            raise RuntimeError("OSS Lighting storage requires OSS_BUCKET and OSS_REGION or OSS_ENDPOINT")
+            raise RuntimeError("OSS Lighting storage requires OSS_BUCKET_TEST / OSS_BUCKET_PROD and OSS_REGION or OSS_ENDPOINT")
+        if not self.oss_bucket_test or not self.oss_bucket_prod or self.oss_bucket_test == self.oss_bucket_prod:
+            raise RuntimeError("Declare distinct OSS_BUCKET_TEST and OSS_BUCKET_PROD before using OSS")
+        expected_bucket = self.oss_bucket_test if self.runtime_env == "test" else self.oss_bucket_prod
+        if self.oss_bucket != expected_bucket:
+            raise RuntimeError("OSS_BUCKET does not match the selected runtime environment")
+        other_bucket = self.oss_bucket_prod if self.runtime_env == "test" else self.oss_bucket_test
+        if self.backup_oss_bucket == other_bucket:
+            raise RuntimeError("Backup bucket must not point to the other environment's Lighting bucket")
         if self.oss_credential_mode == "access_key" and (not self.oss_access_key_id or not self.oss_access_key_secret):
             raise RuntimeError("OSS access_key mode requires OSS_ACCESS_KEY_ID and OSS_ACCESS_KEY_SECRET")
 

@@ -18,7 +18,7 @@ from app.core.state_bundle import create_temporary_state_bundle  # noqa: E402
 
 def main() -> None:
     if not settings.backup_oss_bucket:
-        raise RuntimeError("BACKUP_OSS_BUCKET is required")
+        raise RuntimeError("BACKUP_OSS_BUCKET_TEST / BACKUP_OSS_BUCKET_PROD are required")
 
     zip_path_text, temp_dir_text = create_temporary_state_bundle()
     zip_path, temp_dir = Path(zip_path_text), Path(temp_dir_text)

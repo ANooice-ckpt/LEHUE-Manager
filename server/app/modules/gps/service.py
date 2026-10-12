@@ -96,6 +96,24 @@ def _append_raw_archive(record: dict[str, Any], received: datetime) -> bool:
         return False
 
 
+def accepts_recorded_time(conn, participant_id: str, recorded: datetime | None) -> bool:
+    """During closeout accept queued study records, never new post-exposure GPS.
+
+    Acknowledge out-of-period messages without storing them so they cannot block
+    older messages in the phone's upload queue. Credential revocation is separate.
+    """
+    subject = conn.execute("SELECT * FROM study_subjects WHERE participant_id=?", (participant_id,)).fetchone()
+    if not subject or not subject["awaiting_final_morning"]:
+        return True
+    if recorded is None or not subject["final_end"] or not subject["start_date"]:
+        return False
+    start, _ = _date_bounds(subject["start_date"])
+    _, end = _date_bounds(subject["final_end"])
+    if subject["exposure_ended_at_utc"]:
+        end = min(end, subject["exposure_ended_at_utc"])
+    return start <= iso_utc(recorded) < end
+
+
 def ingest(
     participant_id: str,
     payload: dict[str, Any],
@@ -112,6 +130,8 @@ def ingest(
 
     try:
         with db() as conn:
+            if not accepts_recorded_time(conn, participant_id, rec_dt):
+                return {"stored": False, "duplicate": False, "ignored": "outside_exposure_period"}
             cur = conn.execute(
                 """
                 INSERT INTO raw_events(

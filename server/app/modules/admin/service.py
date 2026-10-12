@@ -150,7 +150,7 @@ def import_s0_file(data: dict[str, Any], operator: str) -> dict:
         raise ValueError("S0 文件内容不是有效的 base64") from exc
     if len(raw) > 20 * 1024 * 1024:
         raise ValueError("S0 文件超过 20 MB，请确认选择了正确的问卷星累计表")
-    result = s0_import.import_s0(filename, raw, operator)
+    result = s0_import.import_s0(filename, raw, operator, data.get("source_id") or "default")
     audit(operator, "s0.import", "s0_import", result["import_uid"], {key: result[key] for key in ("total", "imported", "filtered", "duplicate")})
     return result
 
@@ -186,7 +186,7 @@ def update_candidate(candidate_uid: str, data: dict[str, Any], operator: str):
 def list_subjects():
     today = local_today()
     today_date = date.fromisoformat(today)
-    lighting_target = participant_service.form_target_date("evening").isoformat()
+    lighting_target = participant_service.form_target_date("lighting").isoformat()
     with db() as conn:
         rows = [dict(r) for r in conn.execute("SELECT * FROM study_subjects ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'ready' THEN 1 WHEN 'scheduled' THEN 2 ELSE 3 END, participant_id")]
         counts = _questionnaire_counts(conn, [r["participant_id"] for r in rows])
@@ -217,8 +217,9 @@ def list_subjects():
                 except ValueError:
                     pass
             row["questionnaire_today_completed"] = counts.get(row["participant_id"], 0)
-            row["lighting_target_date"] = lighting_target
-            row["lighting_current"] = light_service.portal_light_state(row["participant_id"], lighting_target)
+            subject_target = min(lighting_target, row["final_end"]) if row["final_end"] else lighting_target
+            row["lighting_target_date"] = subject_target
+            row["lighting_current"] = light_service.portal_light_state(row["participant_id"], subject_target)
             row["lighting_today"] = row["lighting_current"]
             prepared_at = row.get("preparation_started_at_utc") or ""
             row["gps_test_received"] = bool(prepared_at and conn.execute(
@@ -252,6 +253,8 @@ def gps_track(participant_id: str, hours: int) -> dict[str, Any]:
 
 def update_subject(participant_id: str, data: dict[str, Any], operator: str):
     with db() as conn:
+        # A stale edit must not race the operation that ends exposure.
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute("SELECT * FROM study_subjects WHERE participant_id=?", (participant_id,)).fetchone()
         if not row:
             raise ValueError("participant not found")
@@ -260,6 +263,12 @@ def update_subject(participant_id: str, data: dict[str, Any], operator: str):
         current_end = row["end_date"] if actual_period else row["expected_end"]
         planned_start = str(data.get("planned_start", current_start) or "").strip()
         planned_end = str(data.get("planned_end", current_end) or "").strip()
+        exposure_ended = bool(
+            row["final_end"] or row["awaiting_final_morning"] or row["exposure_ended_at_utc"]
+            or row["status"] == "completed"
+        )
+        if exposure_ended and (planned_start != current_start or planned_end != current_end):
+            raise ValueError("曝光已结束，不能通过编辑日期延长或重新开始实验；仍可编辑备注、批次和负责人")
         for label, value in (("开始", planned_start), ("结束", planned_end)):
             if not value:
                 continue
@@ -286,7 +295,7 @@ def update_subject(participant_id: str, data: dict[str, Any], operator: str):
                 participant_id,
             ),
         )
-        if actual_period and row["pack_id"]:
+        if actual_period and not exposure_ended and row["pack_id"]:
             conn.execute(
                 "UPDATE device_packs SET issued_date=?,expected_return_date=?,updated_at_utc=? WHERE pack_id=? AND current_participant_id=?",
                 (planned_start, planned_end, now, row["pack_id"], participant_id),
@@ -304,6 +313,17 @@ def promote_candidate(candidate_uid: str, data: dict[str, Any], operator: str):
         if not cand:
             raise ValueError("candidate not found")
     with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        existing_ids = [row["participant_id"] for row in conn.execute(
+            "SELECT participant_id FROM study_subjects WHERE candidate_uid=? ORDER BY participant_id", (candidate_uid,),
+        )]
+        linked_id = cand["linked_participant_id"]
+        if existing_ids or linked_id:
+            bound_ids = sorted(set(existing_ids) | ({linked_id} if linked_id else set()))
+            detail = ""
+            if existing_ids != [linked_id]:
+                detail = f"；请核对绑定：身份库 {linked_id or '无'}，研究库 {', '.join(existing_ids) or '无'}"
+            raise ValueError(f"候选人已绑定被试 {', '.join(bound_ids)}，不能重复赋 ID；请刷新候选列表{detail}")
         if conn.execute("SELECT 1 FROM study_subjects WHERE participant_id=?", (sid,)).fetchone():
             raise ValueError("participant_id already exists")
         conn.execute(
@@ -606,9 +626,9 @@ def end_exposure(participant_id: str, data: dict[str, Any], operator: str, *, ea
         if final_day < start_day or final_day > date.fromisoformat(local_today()):
             raise ValueError("final_end must be within the actual study period and not in the future")
         conn.execute(
-            """UPDATE study_subjects SET final_end=?,end_date=?,awaiting_final_morning=1,completion_type=?,
+            """UPDATE study_subjects SET final_end=?,end_date=?,awaiting_final_morning=1,completion_type=?,exposure_ended_at_utc=?,
                close_notes=?,updated_at_utc=? WHERE participant_id=?""",
-            (final_end, final_end, "early_termination" if early else "normal", reason, now, participant_id),
+            (final_end, final_end, "early_termination" if early else "normal", now, reason, now, participant_id),
         )
         if subject["pack_id"]:
             conn.execute(
@@ -622,7 +642,6 @@ def end_exposure(participant_id: str, data: dict[str, Any], operator: str, *, ea
                    WHERE participant_id=? AND pack_id=? AND effective_to_utc=''""",
                 (final_end, now, participant_id, subject["pack_id"]),
             )
-        conn.execute("UPDATE participants SET is_active=0 WHERE participant_id=?", (participant_id,))
     action = "participant.terminate" if early else "participant.exposure.end"
     audit(operator, action, "participant", participant_id, {"final_end": final_end, "reason": reason, "pack_id": subject["pack_id"]})
     return {"ok": True, "participant_id": participant_id, "status": "running", "awaiting_final_morning": True, "final_end": final_end, "logistics_status": "returning"}

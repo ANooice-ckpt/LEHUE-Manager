@@ -140,10 +140,10 @@ def _normalize_seq(value: str) -> str:
     return str(value or "").strip().removesuffix(".0")
 
 
-def _stable_keys(source_seq: str, phone: str, wechat: str) -> list[str]:
+def _stable_keys(source_seq: str, phone: str, wechat: str, source_id: str = "default") -> list[str]:
     keys: list[str] = []
     if source_seq := _normalize_seq(source_seq):
-        keys.append(f"seq:{source_seq}")
+        keys.append(f"seq:{source_id}:{source_seq}")
     if phone := _normalize_contact(phone):
         keys.append(f"phone:{phone}")
     if wechat := _normalize_contact(wechat).lower():
@@ -209,13 +209,18 @@ def _validate_s0(rows: list[dict[str, str]]) -> None:
         raise ValueError("文件不像 S0 招募问卷累计表，请检查是否选择了正确文件")
 
 
-def import_s0(filename: str, raw: bytes, operator: str) -> dict:
+def import_s0(filename: str, raw: bytes, operator: str, source_id: str = "default") -> dict:
+    source_id = str(source_id or "default").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", source_id):
+        raise ValueError("问卷来源 ID 请使用问卷编号或英文字母、数字、下划线、短横线")
     rows = parse_table(filename, raw)
     _validate_s0(rows)
     digest = hashlib.sha256(raw).hexdigest()
     with identity_db() as conn:
         existing_import = conn.execute("SELECT * FROM s0_imports WHERE sha256=?", (digest,)).fetchone()
         if existing_import:
+            if existing_import["source_id"] != source_id:
+                raise ValueError("同一文件已属于另一问卷来源，请核对来源 ID")
             return {
                 "import_uid": existing_import["import_uid"],
                 "total": existing_import["row_count"],
@@ -227,17 +232,36 @@ def import_s0(filename: str, raw: bytes, operator: str) -> dict:
         import_uid = f"s0_{secrets.token_hex(8)}"
         now = now_iso()
         old_rows = [dict(row) for row in conn.execute("SELECT * FROM candidates ORDER BY linked_participant_id<>'' DESC, updated_at_utc DESC")]
-        old_by_key: dict[str, dict] = {}
+        old_by_key: dict[str, dict[str, dict]] = {}
+
+        def index_candidate(old):
+            # Keep both original and manually corrected contacts searchable.
+            original = _mapped(json.loads(old.get("s0_raw_json") or "{}"))
+            for values in (old, original):
+                for key in _stable_keys(values.get("source_seq", ""), values.get("phone", ""), values.get("wechat", ""), old.get("s0_source_id", "default")):
+                    old_by_key.setdefault(key, {})[old["candidate_uid"]] = old
+
         for old in old_rows:
-            for key in _stable_keys(old.get("source_seq", ""), old.get("phone", ""), old.get("wechat", "")):
-                old_by_key.setdefault(key, old)
+            index_candidate(old)
 
         seen: set[str] = set()
         imported = 0
         filtered = 0
-        for row in rows:
+        for row_number, row in enumerate(rows, 2):
             mapped = _mapped(row)
-            old = next((old_by_key[key] for key in _stable_keys(mapped["source_seq"], mapped["phone"], mapped["wechat"]) if key in old_by_key), {})
+            matches = {}
+            for key in _stable_keys(mapped["source_seq"], mapped["phone"], mapped["wechat"], source_id):
+                matches.update(old_by_key.get(key, {}))
+            if len(matches) > 1:
+                raise ValueError(f"第 {row_number} 行的序号/联系方式对应不同候选人，整份导入已取消，请先核对")
+            old = next(iter(matches.values()), {})
+            if old:
+                original = _mapped(json.loads(old.get("s0_raw_json") or "{}"))
+                for field in ("phone", "wechat"):
+                    incoming = _normalize_contact(mapped[field]).lower()
+                    known = {_normalize_contact(value).lower() for value in (old.get(field), original.get(field)) if value}
+                    if incoming and known and incoming not in known:
+                        raise ValueError(f"第 {row_number} 行联系方式与已有候选人冲突，整份导入已取消；请核对问卷来源 ID 和原始记录")
             candidate_uid = old.get("candidate_uid") or f"cand_{secrets.token_hex(8)}"
             seen.add(candidate_uid)
             # Preserve fields which may have been corrected manually after import.
@@ -245,6 +269,7 @@ def import_s0(filename: str, raw: bytes, operator: str) -> dict:
                 mapped[field] = old.get(field) or mapped[field]
             values = {
                 **mapped,
+                "s0_source_id": source_id,
                 "source": old.get("source") or "问卷星",
                 "linked_participant_id": old.get("linked_participant_id"),
                 "notes": old.get("notes") or "",
@@ -260,7 +285,7 @@ def import_s0(filename: str, raw: bytes, operator: str) -> dict:
                 "fixed_position_ratio", "screen_time_ratio", "indoor_daylight", "artificial_light_reliance",
                 "outdoor_time", "exposure_mechanism", "work_district", "home_district", "commute_mode",
                 "commute_duration", "phone_os", "willingness", "pickup_method", "availability",
-                "notes", "source_seq", "in_latest_snapshot",
+                "notes", "source_seq", "s0_source_id", "in_latest_snapshot",
                 "s0_import_uid", "s0_raw_json", "created_at_utc", "updated_at_utc",
             ]
             conn.execute(
@@ -269,17 +294,18 @@ def import_s0(filename: str, raw: bytes, operator: str) -> dict:
                 [candidate_uid, *(values[field] for field in fields)],
             )
             imported += 1
+            index_candidate({"candidate_uid": candidate_uid, **values})
 
         if seen:
             placeholders = ",".join("?" for _ in seen)
             conn.execute(
-                f"UPDATE candidates SET in_latest_snapshot=0,updated_at_utc=? WHERE (source='问卷星' OR s0_import_uid<>'') AND candidate_uid NOT IN ({placeholders})",
-                [now, *seen],
+                f"UPDATE candidates SET in_latest_snapshot=0,updated_at_utc=? WHERE s0_source_id=? AND (source='问卷星' OR s0_import_uid<>'') AND candidate_uid NOT IN ({placeholders})",
+                [now, source_id, *seen],
             )
         else:
-            conn.execute("UPDATE candidates SET in_latest_snapshot=0,updated_at_utc=? WHERE source='问卷星' OR s0_import_uid<>''", (now,))
+            conn.execute("UPDATE candidates SET in_latest_snapshot=0,updated_at_utc=? WHERE s0_source_id=? AND (source='问卷星' OR s0_import_uid<>'')", (now, source_id))
         conn.execute(
-            "INSERT INTO s0_imports(import_uid,filename,sha256,file_bytes,row_count,imported_count,filtered_count,imported_at_utc,imported_by) VALUES(?,?,?,?,?,?,?,?,?)",
-            (import_uid, Path(filename).name, digest, raw, len(rows), imported, filtered, now, operator),
+            "INSERT INTO s0_imports(import_uid,filename,sha256,file_bytes,row_count,imported_count,filtered_count,imported_at_utc,imported_by,source_id) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (import_uid, Path(filename).name, digest, raw, len(rows), imported, filtered, now, operator, source_id),
         )
     return {"import_uid": import_uid, "total": len(rows), "imported": imported, "filtered": filtered, "duplicate": False}

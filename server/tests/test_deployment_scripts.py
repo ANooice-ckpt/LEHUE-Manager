@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import io
 import os
+import shutil
 import subprocess
 import sys
 import urllib.error
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -69,3 +72,60 @@ def test_setup_checks_upgrade_and_admin_state_before_pi_prompt():
     assert setup.index('DEPLOYMENT_STATE="upgrade"') < setup.index('read -r -p "PI username: "')
     assert setup.index('ADMIN_COUNT="$(') < setup.index('read -r -p "PI username: "')
     assert "Existing CREDENTIAL_ENCRYPTION_KEY is not a valid Fernet key" in setup
+
+
+@pytest.mark.parametrize("scenario", ["success", "restore-fails", "wrong-environment", "still-running"])
+def test_restore_script_stops_writers_and_never_restarts_after_failed_restore(tmp_path, scenario):
+    bash = shutil.which("bash")
+    if not bash and (git := shutil.which("git")):
+        bundled = Path(git).resolve().parents[1] / "bin" / "bash.exe"
+        if bundled.exists():
+            bash = str(bundled)
+    if not bash:
+        pytest.skip("Bash is required for deployment script execution tests")
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    shutil.copyfile(REPO_ROOT / "scripts" / "server_snapshot.sh", scripts / "server_snapshot.sh")
+    snapshots = tmp_path / "server" / "data" / "snapshots"
+    snapshots.mkdir(parents=True)
+    (snapshots / "test.zip").write_bytes(b"mock archive; real validation is covered by state-bundle tests")
+    wrapper = tmp_path / "run-test.sh"
+    wrapper.write_text('''#!/usr/bin/env bash
+set -euo pipefail
+docker() {
+  printf '%s\\n' "$*" >> "$MOCK_LOG"
+  if [[ "$*" == *"ps --status running"* ]]; then
+    if [[ ! -f "$MOCK_STOPPED" || "$SCENARIO" == still-running ]]; then echo mock-api; fi
+  elif [[ "$*" == *"exec -T api"* ]]; then
+    if [[ "$SCENARIO" == wrong-environment ]]; then echo prod; else echo test; fi
+  elif [[ "$*" == *"stop api"* ]]; then
+    touch "$MOCK_STOPPED"
+  elif [[ "$*" == *"run --rm"* ]]; then
+    [[ -f "$MOCK_STOPPED" ]] || return 90
+    [[ "$SCENARIO" != restore-fails ]] || return 23
+    echo '{"rollback_state_bundle":"/mock/rollback.zip"}'
+  fi
+}
+python3() { "$MOCK_PYTHON" "$@"; }
+export -f docker python3
+bash "$MOCK_SCRIPT" test restore test.zip
+''', encoding="utf-8")
+    env = {**os.environ, "SCENARIO": scenario, "MOCK_LOG": (tmp_path / "calls.txt").as_posix(),
+           "MOCK_STOPPED": (tmp_path / "stopped").as_posix(), "MOCK_SCRIPT": (scripts / "server_snapshot.sh").as_posix(),
+           "MOCK_PYTHON": Path(sys.executable).as_posix()}
+    result = subprocess.run([bash, wrapper.as_posix()], env=env, capture_output=True, text=True, timeout=20)
+    calls = (tmp_path / "calls.txt").read_text().splitlines()
+    runs = [x for x in calls if "run --rm" in x]
+    starts = [x for x in calls if "up -d" in x]
+    if scenario == "success":
+        assert result.returncode == 0, result.stderr
+        assert len(runs) == len(starts) == 1
+        assert calls.index("compose stop api") < calls.index(runs[0]) < calls.index(starts[0])
+        assert "--api-stopped" in runs[0] and "/data/test/restore_backups" in runs[0]
+    else:
+        assert result.returncode != 0
+        assert not starts
+        if scenario in {"wrong-environment", "still-running"}:
+            assert not runs
+        if scenario == "wrong-environment":
+            assert "compose stop api" not in calls

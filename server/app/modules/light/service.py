@@ -21,7 +21,7 @@ from app.modules.light.storage import get_light_storage
 
 EXPECTED_SAMPLES = 7200
 VALID_THRESHOLD_PCT = 90.0
-PARSER_VERSION = "light-v2"
+PARSER_VERSION = "light-v4"
 ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".txt"}
 CONTENT_DATE_WARNING = "文件已收到，但记录时间似乎与本实验日不符，请确认是否选错文件并重新上传"
 TIME_LABELS = ("modify time", "modified time", "record time", "recorded time", "date time", "datetime", "timestamp", "time")
@@ -252,8 +252,12 @@ def _content_date_warning(records: list[dict], date_local: str) -> str:
     if any(value is None for value in parsed_dates):
         return ""
     experiment_day = date.fromisoformat(date_local)
-    allowed_dates = {experiment_day, experiment_day + timedelta(days=1)}
-    return CONTENT_DATE_WARNING if all(value not in allowed_dates for value in parsed_dates) else ""
+    # A normal 20-hour record starts on its assigned day and may cross midnight.
+    # Merely overlapping the following day must not make it that day's record.
+    return CONTENT_DATE_WARNING if (
+        min(parsed_dates) != experiment_day
+        or max(parsed_dates) > experiment_day + timedelta(days=1)
+    ) else ""
 
 
 def parse_light_path(filename: str, path: Path, date_local: str = "") -> dict:
@@ -277,7 +281,7 @@ def parse_light_path(filename: str, path: Path, date_local: str = "") -> dict:
             melanopic_values.append(melanopic)
     valid = len(photopic_values)
     valid_pct = round(valid / EXPECTED_SAMPLES * 100, 1)
-    quality = "unreadable" if total <= 0 else "valid" if valid_pct >= VALID_THRESHOLD_PCT else "insufficient"
+    quality = "unreadable" if total <= 0 else "valid" if valid * 100 >= EXPECTED_SAMPLES * VALID_THRESHOLD_PCT else "insufficient"
     photo_mean, photo_median, photo_max = _stats(photopic_values)
     melanopic_mean, melanopic_median, melanopic_max = _stats(melanopic_values)
     record_start, record_end, coverage_minutes = _record_time_range(records)
@@ -345,6 +349,8 @@ def _public_upload(row, duplicate: bool = False) -> dict:
     result.pop("object_key", None)
     result.pop("sha256", None)
     result["duplicate"] = duplicate
+    result["status"] = result.get("upload_status", "qc")
+    result["uploaded"] = result["status"] in {"uploaded", "qc"}
     return result
 
 
@@ -377,6 +383,7 @@ def _validate_upload(participant_id: str, date_local: str, filename: str, size_b
     suffix = Path(filename).suffix.lower()
     if not date_local:
         raise ValueError("Lighting 暴露日期必须使用 YYYY-MM-DD")
+    validate_filename_assignment(filename, participant_id, date_local)
     if suffix not in ALLOWED_EXTENSIONS:
         raise ValueError("Lighting 只支持 .csv、.xlsx 或 .txt")
     if size_bytes <= 0:
@@ -389,6 +396,40 @@ def _validate_upload(participant_id: str, date_local: str, filename: str, size_b
     return participant_id, date_local, filename, suffix
 
 
+def validate_filename_assignment(filename: str, participant_id: str, date_local: str) -> None:
+    # Recognize the project's explicit participant_date_LIGHT convention only.
+    # Device-generated generic names are provenance, never guessed identities.
+    match = re.fullmatch(r"(?P<pid>[A-Za-z0-9-]+)_(?P<day>\d{8}|\d{4}-\d{2}-\d{2})_LIGHT(?:[ _-].*)?\.(?:csv|xlsx|txt)", filename, re.I)
+    if match:
+        named_day = match["day"].replace("-", "")
+        if match["pid"] != participant_id or named_day != date_local.replace("-", ""):
+            raise ValueError("文件名中的被试编号或实验日与当前任务不一致；请选择正确原始文件，不要修改文件名绕过检查")
+
+
+def _existing_upload(conn, participant_id: str, date_local: str, digest: str, is_test: bool):
+    rows = conn.execute(
+        "SELECT * FROM lighting_files WHERE participant_id=? AND sha256=? ORDER BY id",
+        (participant_id, digest),
+    ).fetchall()
+    for row in rows:
+        if row["date_local"] == date_local:
+            if bool(row["is_test"]) != is_test:
+                raise ValueError("该文件已用于另一采集阶段，测试文件不能作为正式记录；请选择对应阶段的原始文件")
+            return row
+    if any(bool(row["is_test"]) != is_test for row in rows):
+        raise ValueError("该文件已用于另一采集阶段，测试文件不能作为正式记录；请选择对应阶段的原始文件")
+    # Keep a clearly misassigned raw record intact while allowing submission to
+    # its actual start day. Pending or ambiguous files do not qualify for this.
+    assigned = [row for row in rows if not (
+        row["upload_status"] == "qc" and row["parse_error"] == CONTENT_DATE_WARNING
+        and _record_date(row["record_start"]) == date.fromisoformat(date_local)
+    )]
+    if assigned:
+        assigned_dates = "、".join(dict.fromkeys(row["date_local"] for row in assigned))
+        raise ValueError(f"这份原始文件已归属于 {assigned_dates} 实验日，不能重复归属到 {date_local}；请选择该日的原始文件。如原归属有误，请联系研究人员核对")
+    return None
+
+
 def store_upload_path(participant_id: str, date_local: str, filename: str, source_path: Path, uploaded_by: str, is_test: bool = False) -> dict:
     source_path = Path(source_path)
     size_bytes = source_path.stat().st_size
@@ -397,16 +438,8 @@ def store_upload_path(participant_id: str, date_local: str, filename: str, sourc
     )
     digest = _sha256_file(source_path)
     with db() as conn:
-        existing = conn.execute(
-            "SELECT * FROM lighting_files WHERE participant_id=? AND date_local=? AND sha256=?",
-            (participant_id, date_local, digest),
-        ).fetchone()
+        existing = _existing_upload(conn, participant_id, date_local, digest, is_test)
     if existing:
-        if is_test and not existing["is_test"]:
-            with db() as conn:
-                conn.execute("UPDATE lighting_files SET is_test=1 WHERE upload_uid=?", (existing["upload_uid"],))
-                refresh_subject_ready(conn, participant_id, now_iso())
-                existing = conn.execute("SELECT * FROM lighting_files WHERE upload_uid=?", (existing["upload_uid"],)).fetchone()
         return _public_upload(existing, duplicate=True)
 
     upload_uid = f"light_{secrets.token_hex(10)}"
@@ -420,31 +453,40 @@ def store_upload_path(participant_id: str, date_local: str, filename: str, sourc
     try:
         summary = _parse_qc(filename, source_path, date_local)
         with db() as conn:
-            conn.execute(
-                """INSERT INTO lighting_files(
-                    upload_uid,participant_id,date_local,original_filename,stored_path,storage_backend,object_key,file_size_bytes,sha256,
-                    uploaded_at_utc,uploaded_by,parser_version,records_expected,records_total,records_valid,
-                    records_saturated,valid_pct,quality,photopic_mean,photopic_median,photopic_max,
-                    melanopic_mean,melanopic_median,melanopic_max,record_start,record_end,coverage_minutes,parse_error
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    upload_uid, participant_id, date_local, filename, object_key, storage.backend, object_key,
-                    size_bytes, digest, now_iso(), uploaded_by, PARSER_VERSION,
-                    summary["records_expected"], summary["records_total"], summary["records_valid"], summary["records_saturated"],
-                    summary["valid_pct"], summary["quality"], summary["photopic_mean"], summary["photopic_median"],
-                    summary["photopic_max"], summary["melanopic_mean"], summary["melanopic_median"], summary["melanopic_max"],
-                    summary["record_start"], summary["record_end"], summary["coverage_minutes"], summary["parse_error"],
-                ),
-            )
-            row = conn.execute("SELECT * FROM lighting_files WHERE upload_uid=?", (upload_uid,)).fetchone()
-            if is_test:
-                conn.execute("UPDATE lighting_files SET is_test=1 WHERE upload_uid=?", (upload_uid,))
-                refresh_subject_ready(conn, participant_id, now_iso())
+            # Copying/parsing raw data stays outside the write transaction. Check
+            # again under SQLite's write lock so concurrent days cannot both win.
+            conn.execute("BEGIN IMMEDIATE")
+            existing = _existing_upload(conn, participant_id, date_local, digest, is_test)
+            if existing:
+                row = existing
+            else:
+                conn.execute(
+                    """INSERT INTO lighting_files(
+                        upload_uid,participant_id,date_local,original_filename,stored_path,storage_backend,object_key,file_size_bytes,sha256,
+                        uploaded_at_utc,uploaded_by,parser_version,records_expected,records_total,records_valid,
+                        records_saturated,valid_pct,quality,photopic_mean,photopic_median,photopic_max,
+                        melanopic_mean,melanopic_median,melanopic_max,record_start,record_end,coverage_minutes,parse_error
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        upload_uid, participant_id, date_local, filename, object_key, storage.backend, object_key,
+                        size_bytes, digest, now_iso(), uploaded_by, PARSER_VERSION,
+                        summary["records_expected"], summary["records_total"], summary["records_valid"], summary["records_saturated"],
+                        summary["valid_pct"], summary["quality"], summary["photopic_mean"], summary["photopic_median"],
+                        summary["photopic_max"], summary["melanopic_mean"], summary["melanopic_median"], summary["melanopic_max"],
+                        summary["record_start"], summary["record_end"], summary["coverage_minutes"], summary["parse_error"],
+                    ),
+                )
                 row = conn.execute("SELECT * FROM lighting_files WHERE upload_uid=?", (upload_uid,)).fetchone()
+                if is_test:
+                    conn.execute("UPDATE lighting_files SET is_test=1 WHERE upload_uid=?", (upload_uid,))
+                    refresh_subject_ready(conn, participant_id, now_iso())
+                    row = conn.execute("SELECT * FROM lighting_files WHERE upload_uid=?", (upload_uid,)).fetchone()
     except Exception:
         storage.delete(object_key)
         raise
-    return _public_upload(row)
+    if existing:
+        storage.delete(object_key)
+    return _public_upload(row, duplicate=bool(existing))
 
 
 def prepare_direct_upload(participant_id: str, date_local: str, filename: str, size_bytes: int, sha256: str, is_test: bool = False) -> dict:
@@ -460,22 +502,20 @@ def prepare_direct_upload(participant_id: str, date_local: str, filename: str, s
     object_key = f"raw/lighting/{participant_id}/{date_local}/{upload_uid}{suffix}"
     now = now_iso()
     with db() as conn:
-        conn.execute(
-            """INSERT OR IGNORE INTO lighting_files(
+        conn.execute("BEGIN IMMEDIATE")
+        row = _existing_upload(conn, participant_id, date_local, digest, is_test)
+        if row is None:
+            conn.execute(
+                """INSERT INTO lighting_files(
                 upload_uid,participant_id,date_local,original_filename,stored_path,storage_backend,object_key,
-                file_size_bytes,sha256,uploaded_at_utc,uploaded_by,parser_version,quality,upload_status
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (
-                upload_uid, participant_id, date_local, filename, object_key, "oss", object_key,
-                int(size_bytes), digest, now, "participant_portal", PARSER_VERSION, "pending", "pending",
-            ),
-        )
-        row = conn.execute(
-            "SELECT * FROM lighting_files WHERE participant_id=? AND date_local=? AND sha256=?",
-            (participant_id, date_local, digest),
-        ).fetchone()
-        if is_test:
-            conn.execute("UPDATE lighting_files SET is_test=1 WHERE upload_uid=?", (row["upload_uid"],))
+                file_size_bytes,sha256,uploaded_at_utc,uploaded_by,parser_version,quality,upload_status,is_test
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    upload_uid, participant_id, date_local, filename, object_key, "oss", object_key,
+                    int(size_bytes), digest, now, "participant_portal", PARSER_VERSION, "pending", "pending", int(is_test),
+                ),
+            )
+            row = conn.execute("SELECT * FROM lighting_files WHERE upload_uid=?", (upload_uid,)).fetchone()
     if row["upload_status"] == "qc":
         result = _public_upload(row, duplicate=True)
         result["direct"] = True
@@ -575,8 +615,25 @@ def store_upload(participant_id: str, date_local: str, filename: str, raw: bytes
         Path(name).unlink(missing_ok=True)
 
 
-def _quality_rank(row: dict) -> tuple[int, int, float, int]:
+def is_eligible(row: dict) -> bool:
+    return (not row.get("is_test") and row.get("upload_status", "qc") == "qc"
+            and not filename_conflicts(row)
+            and row.get("quality") == "valid" and not row.get("parse_error")
+            and (row.get("coverage_minutes") is None or row["coverage_minutes"] >= SHORT_COVERAGE_MINUTES))
+
+
+def filename_conflicts(row: dict) -> bool:
+    try:
+        validate_filename_assignment(row.get("original_filename", ""), row["participant_id"], row["date_local"])
+    except ValueError:
+        return True
+    return False
+
+
+def _quality_rank(row: dict) -> tuple:
     return (
+        0 if is_eligible(row) else 1,
+        1 if row.get("parse_error") == CONTENT_DATE_WARNING or filename_conflicts(row) else 0,
         0 if row.get("upload_status", "qc") == "qc" else 1,
         {"valid": 0, "insufficient": 1, "unreadable": 2}.get(row.get("quality"), 9),
         -float(row.get("valid_pct") or 0),
@@ -586,7 +643,7 @@ def _quality_rank(row: dict) -> tuple[int, int, float, int]:
 
 def best_for_date(participant_id: str, date_local: str) -> dict | None:
     with db() as conn:
-        rows = [dict(row) for row in conn.execute("SELECT * FROM lighting_files WHERE participant_id=? AND date_local=?", (participant_id, date_local))]
+        rows = [dict(row) for row in conn.execute("SELECT * FROM lighting_files WHERE participant_id=? AND date_local=? AND is_test=0", (participant_id, date_local))]
     return min(rows, key=_quality_rank) if rows else None
 
 
@@ -606,13 +663,15 @@ def portal_light_state(participant_id: str, date_local: str) -> dict:
             "message": "等待上传完成" if upload_status == "pending" else "等待 QC",
         }
     return {
-        "status": "done" if row["quality"] == "valid" else row["quality"],
+        "status": "done" if is_eligible(row) else "needs_review" if row["quality"] == "valid" else row["quality"],
         "uploaded": True,
-        "quality": row["quality"],
+        "quality": row["quality"] if is_eligible(row) or row["quality"] != "valid" else "needs_review",
         "valid_pct": row["valid_pct"],
+        "records_valid": row["records_valid"],
+        "records_expected": row["records_expected"],
         "filename": row["original_filename"],
         "uploaded_at_utc": row["uploaded_at_utc"],
-        "message": row["parse_error"],
+        "message": "文件名归属冲突，请重新选择正确原始文件" if filename_conflicts(row) else row["parse_error"],
         "coverage_minutes": row.get("coverage_minutes"),
         "record_start": row.get("record_start", ""),
         "record_end": row.get("record_end", ""),
@@ -654,7 +713,7 @@ def daily_qc_rows() -> list[dict]:
     with db() as conn:
         subjects = [dict(row) for row in conn.execute("SELECT * FROM study_subjects WHERE status IN ('running','completed') AND start_date<>'' ORDER BY participant_id")]
         forms = {(row["participant_id"], row["date_local"], row["form_key"]) for row in conn.execute("SELECT participant_id,date_local,form_key FROM questionnaire_responses")}
-        light_rows = [dict(row) for row in conn.execute("SELECT * FROM lighting_files WHERE upload_status='qc'")]
+        light_rows = [dict(row) for row in conn.execute("SELECT * FROM lighting_files WHERE upload_status='qc' AND is_test=0")]
     best: dict[tuple[str, str], dict] = {}
     for row in light_rows:
         key = (row["participant_id"], row["date_local"])
@@ -710,6 +769,8 @@ def daily_qc_rows() -> list[dict]:
                         issues.append({"type": "unreadable_light", "label": "Lighting无法解析"})
                     if light and light["parse_error"] == CONTENT_DATE_WARNING:
                         issues.append({"type": "wrong_day_light", "label": CONTENT_DATE_WARNING})
+                    if light and filename_conflicts(light):
+                        issues.append({"type": "wrong_assignment_light", "label": "Lighting文件名归属冲突"})
                     if light and light["coverage_minutes"] is not None and light["coverage_minutes"] < SHORT_COVERAGE_MINUTES:
                         issues.append({
                             "type": "short_light_coverage",

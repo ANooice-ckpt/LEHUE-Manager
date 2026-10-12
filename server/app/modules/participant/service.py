@@ -78,7 +78,7 @@ def _clock_for_date(subject, target: date) -> tuple[str, int, int]:
 
 def form_target_date(form_key: str, local_now: datetime | None = None) -> date:
     current = local_now or datetime.now(ZoneInfo(settings.study_timezone))
-    if form_key == "morning" or current.hour < settings.questionnaire_evening_cutoff_hour:
+    if form_key in {"morning", "lighting"} or current.hour < settings.questionnaire_evening_cutoff_hour:
         return current.date() - timedelta(days=1)
     return current.date()
 
@@ -172,9 +172,9 @@ def _portal_progress(conn, subject, targets: dict[str, date]) -> dict:
     lighting = {
         row["date_local"]
         for row in conn.execute(
-            "SELECT DISTINCT date_local FROM lighting_files WHERE participant_id=? AND upload_status='qc' AND quality='valid'",
+            "SELECT * FROM lighting_files WHERE participant_id=? AND is_test=0",
             (subject["participant_id"],),
-        )
+        ) if light_service.is_eligible(dict(row))
     }
     completed_total = expected_total = 0
     days = []
@@ -188,7 +188,7 @@ def _portal_progress(conn, subject, targets: dict[str, date]) -> dict:
         due = {
             "morning": current <= targets["morning"],
             "evening": current <= targets["evening"],
-            "lighting": current <= targets["evening"],
+            "lighting": current <= targets["lighting"],
         }
         for key in states:
             if not due[key] and states[key] != "done":
@@ -311,15 +311,17 @@ def portal_state(token: str) -> dict:
             "progress": {"completed": completed_tests, "expected": 2, "percent": round(completed_tests / 2 * 100), "days": []},
             "readiness": {"gps_test_received": gps_ok, "lighting_test_uploaded": light_ok, "ready": subject["status"] == "ready"},
             "gps": _gps_state(subject["participant_id"]), "lighting": light_state, "lighting_tasks": [light_state], "forms": [],
-            "notice": "当前为测试/教学模式。完成一次 GPS 实际回传和一次可解析的 Lighting 测试上传后，系统自动标记 Ready。Lighting 测试不要求全天时长或正式日覆盖量。",
+            "notice": "当前为测试/教学模式。请实际练习一次短时记录、断开蓝牙、重新连接并保存原始文件、上传，再开启新记录。完成 GPS 回传和可解析 Lighting 测试上传后自动标记 Ready；不要求测试文件达到 7200 条。",
             "help": [],
         }
     definitions = list_forms()
     targets = {definition["key"]: form_target_date(definition["key"], local_now) for definition in definitions}
+    targets["lighting"] = form_target_date("lighting", local_now)
     closing_mode = bool(subject["status"] == "running" and subject["awaiting_final_morning"] and subject["final_end"])
     if closing_mode:
-        targets["morning"] = date.fromisoformat(subject["final_end"])
+        targets["morning"] = min(targets["morning"], date.fromisoformat(subject["final_end"]))
         targets["evening"] = date.fromisoformat(subject["final_end"])
+        targets["lighting"] = min(targets["lighting"], date.fromisoformat(subject["final_end"]))
     active_assignment = form_assignment(subject, "evening", targets["evening"], local_now.date())
     with db() as conn:
         completed = {
@@ -334,8 +336,6 @@ def portal_state(token: str) -> dict:
     for is_makeup in (False, True):
         for definition in definitions:
             key = definition["key"]
-            if closing_mode and key == "evening":
-                continue
             exposure_day = targets[key] - timedelta(days=1) if is_makeup else targets[key]
             assignment = form_assignment(subject, key, exposure_day, local_now.date())
             if not 1 <= assignment["study_day"] <= assignment["total_days"]:
@@ -354,7 +354,7 @@ def portal_state(token: str) -> dict:
                 "completed": bool(submitted_at),
                 "submitted_at_utc": submitted_at,
             })
-    exposure_date = targets["evening"]
+    exposure_date = targets["lighting"]
     lighting_tasks = []
     for is_makeup, target in ((False, exposure_date), (True, exposure_date - timedelta(days=1))):
         assignment = form_assignment(subject, "evening", target, local_now.date())
@@ -372,7 +372,14 @@ def portal_state(token: str) -> dict:
             "date_local": target.isoformat(),
             "study_day": assignment["study_day"],
             "direct_upload": settings.light_storage_backend == "oss",
-            "time_scope": form_time_scope("evening", target),
+            "time_scope": {
+                "range": f"{_display_date(target)}开始的记录",
+                "explanation": (
+                    "最终日次晨将原始数据保存到手机后上传，无需开启新记录。网络失败保留原文件、稍后重试。"
+                    if closing_mode else
+                    "次晨先将这份原始数据保存到手机，再开启当天记录并断开蓝牙、佩戴设备，随后上传。网络失败可稍后重试，不要删除原文件。"
+                ),
+            },
         })
         lighting_tasks.append(item)
     lighting = lighting_tasks[0] if lighting_tasks else {
@@ -381,11 +388,7 @@ def portal_state(token: str) -> dict:
         "time_scope": form_time_scope("evening", exposure_date),
     }
     evening_done = bool(completed.get(("evening", targets["evening"].isoformat())))
-    lighting_uploaded = any(
-        item["date_local"] == targets["evening"].isoformat() and item.get("uploaded")
-        for item in lighting_tasks
-    )
-    morning_done = any(form_key == "morning" for form_key, _ in completed)
+    morning_done = bool(completed.get(("morning", targets["morning"].isoformat())))
     if subject["awaiting_final_morning"] and subject["final_end"]:
         final_day = date.fromisoformat(subject["final_end"])
         s2_done = completed.get(("s2", subject["final_end"]))
@@ -415,6 +418,7 @@ def portal_state(token: str) -> dict:
             "pack_id": subject["pack_id"],
         },
         "read_only": subject["status"] != "running",
+        "mode": "closing" if closing_mode else "study",
         "owntracks": {**_owntracks_config(subject), "recommended_platform": _recommended_phone_os(subject["participant_id"])},
         "progress": progress,
         "gps": _gps_state(subject["participant_id"]),
@@ -423,19 +427,19 @@ def portal_state(token: str) -> dict:
         "forms": forms,
         "field_reminders": {
             "morning_restart": {
-                "show": subject["status"] == "running",
+                "show": subject["status"] == "running" and not closing_mode,
                 "completed": morning_done,
-                "text": "拔下 Lighting 并开始今日记录",
+                "text": "先保存前一天原始数据，再开始今日记录并断开蓝牙",
             },
             "evening_charge": {
-                "show": subject["status"] == "running" and evening_done and lighting_uploaded,
-                "text": "今天的上传和睡前问卷已完成，请给 Lighting 接上充电。",
+                "show": subject["status"] == "running" and evening_done and not closing_mode,
+                "text": "睡前问卷已完成；按教学要求放置并充电，原始数据留到次晨保存、上传。",
             },
             "wearing": "白天请按要求佩戴 Lighting；临时摘下后记得重新戴回。",
             "raw_file": "上传后请保留 Lighting 原始文件，确认研究结束前不要删除。",
         },
         "notice": "实验已完成；此入口保留用于查看既有记录。" if subject["status"] == "completed" else (
-            "正式曝光已结束；请完成最终晨间问卷、S2 和仍显示的必要补传。" if subject["awaiting_final_morning"] else
+            "正式曝光已结束；最终日次晨保存并上传最后一份 Lighting、填写最终晨间问卷，无需开启新记录。仍可补填睡前问卷和完成 S2；GPS 待缓存补传完再关闭。" if subject["awaiting_final_morning"] else
             "这是 LEHUE 被试专属工作入口。链接本身用于识别身份，请勿转发给他人。"
         ),
         "help": [
@@ -461,12 +465,12 @@ def _lighting_participant(token: str, date_local: str) -> tuple[str, bool]:
         if exposure_day != local_today():
             raise ValueError("Lighting test upload date must be today")
         return subject["participant_id"], True
-    closing_days = set()
-    if subject["awaiting_final_morning"] and subject["final_end"]:
-        final_day = date.fromisoformat(subject["final_end"])
-        closing_days = {final_day, final_day - timedelta(days=1)}
-    if exposure_day not in (closing_days or set(allowed_exposure_days("evening"))):
-        raise ValueError("Lighting 只允许上传当前目标实验日或上一实验日")
+    # A selected task keeps its date even if midnight/closeout occurs before upload.
+    start, end = _study_bounds(subject)
+    if not start or not end or not start <= exposure_day <= end:
+        raise ValueError("所选实验日不在本次实验范围内")
+    if exposure_day >= local_today():
+        raise ValueError("请在该实验日的次晨保存并上传完整 Lighting 记录")
     assignment = form_assignment(subject, "evening", exposure_day)
     if not 1 <= assignment["study_day"] <= assignment["total_days"]:
         raise ValueError("所选实验日不在本次实验范围内")
@@ -507,19 +511,20 @@ def submit_questionnaire(token: str, form_key: str, answers: dict, date_local: s
         if not closing_mode or not subject["final_end"]:
             raise ValueError("S2 is available only after formal exposure ends")
         exposure_day = date.fromisoformat(subject["final_end"])
+        if date_local and date_local != exposure_day.isoformat():
+            raise ValueError("S2 实验日与最终实验日不一致，请刷新任务")
         assignment = form_assignment(subject, form_key, exposure_day, local_now.date())
     else:
-        if closing_mode and form_key != "morning":
-            raise ValueError("only final morning and S2 remain after exposure ends")
-        if closing_mode:
-            exposure_day = date.fromisoformat(subject["final_end"])
-        else:
-            try:
-                exposure_day = date.fromisoformat(date_local) if date_local else form_target_date(form_key, local_now)
-            except ValueError as exc:
-                raise ValueError("实验日必须使用 YYYY-MM-DD") from exc
-            if exposure_day not in allowed_exposure_days(form_key, local_now):
-                raise ValueError("问卷只允许填写当前目标实验日或上一实验日")
+        try:
+            exposure_day = date.fromisoformat(date_local) if date_local else form_target_date(form_key, local_now)
+        except ValueError as exc:
+            raise ValueError("实验日必须使用 YYYY-MM-DD") from exc
+        # An explicitly opened task retains its date across midnight and closeout.
+        if exposure_day > form_target_date(form_key, local_now):
+            raise ValueError("该问卷尚未到填写时间；晨间问卷需在对应实验日的次日填写")
+        start, end = _study_bounds(subject)
+        if not start or not end or not start <= exposure_day <= end:
+            raise ValueError("所选实验日不在本次实验范围内")
         assignment = form_assignment(subject, form_key, exposure_day, local_now.date())
         if not 1 <= assignment["study_day"] <= assignment["total_days"]:
             raise ValueError("所选实验日不在本次实验范围内")

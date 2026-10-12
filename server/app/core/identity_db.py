@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS contact_logs (
 """
 
 CANDIDATE_COLUMNS = {
+    "s0_source_id": "TEXT NOT NULL DEFAULT 'default'",
     "beijing_based": "TEXT NOT NULL DEFAULT ''",
     "education": "TEXT NOT NULL DEFAULT ''",
     "health_rating": "TEXT NOT NULL DEFAULT ''",
@@ -152,6 +153,9 @@ def init_identity_db() -> None:
         for name, declaration in CANDIDATE_COLUMNS.items():
             if name not in existing:
                 conn.execute(f"ALTER TABLE candidates ADD COLUMN {name} {declaration}")
+        import_columns = {row["name"] for row in conn.execute("PRAGMA table_info(s0_imports)")}
+        if "source_id" not in import_columns:
+            conn.execute("ALTER TABLE s0_imports ADD COLUMN source_id TEXT NOT NULL DEFAULT 'default'")
         existing_contacts = {row["name"] for row in conn.execute("PRAGMA table_info(contact_logs)")}
         for name, declaration in CONTACT_LOG_COLUMNS.items():
             if name not in existing_contacts:
